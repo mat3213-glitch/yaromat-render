@@ -1,0 +1,45 @@
+name: Download Wikimedia Clips
+
+on:
+  workflow_dispatch:
+    inputs:
+      queries:
+        description: 'Search queries (comma-separated), e.g. "rain night,fog city,dark forest"'
+        required: true
+        default: 'rain night city'
+      count:
+        description: 'Clips per query (max 10 recommended)'
+        required: false
+        default: '10'
+      dest_folder:
+        description: 'ЯД destination folder'
+        required: false
+        default: 'Content factory/music_vibe/clips'
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+          sudo apt-get install -y ffmpeg
+
+      - name: Download clips and upload to YaDisk
+        env:
+          YADISK_LOGIN:    ${{ secrets.YADISK_LOGIN }}
+          YADISK_PASSWORD: ${{ secrets.YADISK_PASSWORD }}
+          QUERIES:         ${{ inputs.queries }}
+          COUNT:           ${{ inputs.count }}
+          DEST_FOLDER:     ${{ inputs.dest_folder }}
+        run: python download_clips.py
