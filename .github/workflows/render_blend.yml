@@ -1,0 +1,35 @@
+name: Render Blend Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Render job ID (e.g. 2026-05-30_ty_prosti)'
+        required: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          pip install requests
+          sudo apt-get update -qq
+          sudo apt-get install -y --fix-missing ffmpeg
+
+      - name: Render
+        env:
+          YADISK_LOGIN:    ${{ secrets.YADISK_LOGIN }}
+          YADISK_PASSWORD: ${{ secrets.YADISK_PASSWORD }}
+          JOB_ID:          ${{ inputs.job_id }}
+        run: python render_job.py
