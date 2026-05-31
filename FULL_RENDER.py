@@ -363,8 +363,8 @@ def step4_6_final(concat_path, art_path, audio_path, total_duration, out_path):
         "-r",str(FPS),"-loop","1","-i",art_path,
         "-i",audio_path,
         "-filter_complex",
-        f"[1:v]scale=-1:{H}[s];"
-        f"[s]crop={W}:{H}:'(iw-{W})*t/{total_duration:.1f}':0[moving];"
+        f"[1:v]scale='if(gte(iw,ih),-1,{W})':'if(gte(iw,ih),{H},-1)'[s];"
+        f"[s]crop={W}:{H}:'(iw-{W})*t/{total_duration:.1f}':'(ih-{H})/2'[moving];"
         f"[0:v][moving]blend=all_mode=screen:all_opacity=0.28[blended];"
         f"[blended]rgbashift=rh=-3:bh=3,"
         f"drawgrid=x=0:y=0:w=0:h=2:t=1:color=black@0.18,"
