@@ -1,10 +1,8 @@
 """
-AudioAnalysis.analyze — BPM detection + energy-based segmentation.
+AudioAnalysis.analyze — BPM detection + energy-based segmentation using aubio.
 
-Returns a list of Segments aligned to the beat grid, sized by energy level:
-  high  → 2 or 4 beats  (drops, peaks)
-  medium → 4 or 8 beats  (main body)
-  low   → 8 or 16 beats  (intros, breakdowns)
+No numba/JIT — pure C library (aubio) + numpy + scipy.
+Works on any CPU without warm-up overhead.
 
 Usage:
     from analyze import analyze_track, Segment
@@ -14,11 +12,14 @@ Usage:
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
+import subprocess
+import tempfile
+
+import aubio
 import numpy as np
-import librosa
 from scipy.ndimage import uniform_filter1d
 
 
@@ -37,7 +38,6 @@ _BEATS_BY_ENERGY: dict[str, list[int]] = {
     "medium": [4, 8],
     "low":    [8, 16],
 }
-
 _HIGH_THRESH   = 0.65
 _MEDIUM_THRESH = 0.30
 
@@ -56,30 +56,65 @@ def analyze_track(
         np.random.seed(seed)
 
     track_path = Path(track_path)
-    print(f"[analyze] loading {track_path.name} ({duration or 'full'}s)...")
-    y, sr = librosa.load(str(track_path), duration=duration, mono=True)
-    actual_dur = len(y) / sr
-
-    # BPM and beat timestamps
-    tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr, units="frames")
-    beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-    bpm = float(np.asarray(tempo).flat[0])  # librosa 0.10+ returns array
-    print(f"[analyze] BPM={bpm:.1f}  beats={len(beat_times)}  dur={actual_dur:.1f}s")
-
-    if len(beat_times) < 4:
-        raise ValueError(f"Too few beats detected: {len(beat_times)}")
-
-    # RMS energy sampled at each beat
     hop = 512
-    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+    win = 1024
+    print(f"[analyze] loading {track_path.name} ({duration or 'full'}s)...")
+
+    # aubio pip wheel lacks libav — convert to WAV first (ffmpeg is always available)
+    _wav_tmp = None
+    if track_path.suffix.lower() != ".wav":
+        _wav_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(track_path), "-ar", "44100", "-ac", "1",
+             "-t", str(duration) if duration else "-1",
+             _wav_tmp.name],
+            capture_output=True, check=True,
+        )
+        src_path = _wav_tmp.name
+    else:
+        src_path = str(track_path)
+
+    src = aubio.source(src_path, hop_size=hop)
+    sr = src.samplerate
+    max_samples = int(duration * sr) if duration else None
+
+    tempo_det = aubio.tempo("default", win, hop, sr)
+
+    beat_times: list[float] = []
+    rms_vals: list[float] = []
+    pos = 0
+
+    while True:
+        samples, read = src()
+        if read > 0:
+            rms_vals.append(float(np.sqrt(np.mean(samples[:read] ** 2) + 1e-12)))
+            if tempo_det(samples)[0]:
+                beat_times.append(pos / sr)
+        pos += hop
+        if read < hop:
+            break
+        if max_samples and pos >= max_samples:
+            break
+
+    actual_dur = min(pos / sr, duration or pos / sr)
+    bpm = float(tempo_det.get_bpm()) or 120.0  # fallback 120 if not enough data
+
+    beat_arr = np.array(beat_times)
+    print(f"[analyze] BPM={bpm:.1f}  beats={len(beat_arr)}  dur={actual_dur:.1f}s")
+
+    if len(beat_arr) < 4:
+        raise ValueError(f"Too few beats detected: {len(beat_arr)}")
+
+    # RMS energy at each beat position
+    rms_arr = np.array(rms_vals)
 
     def _rms_at(t: float) -> float:
-        f = int(librosa.time_to_frames(t, sr=sr, hop_length=hop))
-        return float(rms[min(f, len(rms) - 1)])
+        f = int(t * sr / hop)
+        return float(rms_arr[min(f, len(rms_arr) - 1)])
 
-    beat_rms = np.array([_rms_at(float(t)) for t in beat_times])
+    beat_rms = np.array([_rms_at(float(t)) for t in beat_arr])
 
-    # Smooth over 4 beats, normalize
+    # Smooth over 4 beats, normalize 0→1
     smooth = uniform_filter1d(beat_rms, size=4)
     lo, hi = smooth.min(), smooth.max()
     norm = (smooth - lo) / (hi - lo) if hi > lo else np.zeros_like(smooth)
@@ -89,16 +124,16 @@ def analyze_track(
         np.where(norm > _MEDIUM_THRESH, "medium", "low")
     )
 
-    # Group beats into variable-length segments by energy level
+    # Group beats into variable-length segments
     segments: list[Segment] = []
     i = 0
-    while i < len(beat_times):
+    while i < len(beat_arr):
         level = str(energy_class[i])
         n = int(np.random.choice(_BEATS_BY_ENERGY[level]))
-        j = min(i + n, len(beat_times) - 1)
+        j = min(i + n, len(beat_arr) - 1)
 
-        t_start = float(beat_times[i])
-        t_end   = float(beat_times[j]) if j < len(beat_times) - 1 else actual_dur
+        t_start = float(beat_arr[i])
+        t_end   = float(beat_arr[j]) if j < len(beat_arr) - 1 else actual_dur
         dur = max(round(t_end - t_start, 4), 0.1)
 
         segments.append(Segment(
@@ -108,6 +143,9 @@ def analyze_track(
             energy=level,
         ))
         i = j
+
+    if _wav_tmp:
+        Path(_wav_tmp.name).unlink(missing_ok=True)
 
     counts = {e: sum(1 for s in segments if s.energy == e) for e in ("high", "medium", "low")}
     print(f"[analyze] {len(segments)} segments → high={counts['high']} medium={counts['medium']} low={counts['low']}")

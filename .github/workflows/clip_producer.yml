@@ -36,10 +36,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-librosa-${{ runner.os }}-v1
+          key: pip-aubio-${{ runner.os }}-v1
 
       - name: Install Python deps
-        run: pip install librosa scipy numpy
+        run: pip install aubio numpy scipy
 
       - name: Configure rclone ydrive
         env:
@@ -55,7 +55,6 @@ jobs:
       - name: Run clip_producer_job.py
         env:
           JOB_ID: ${{ inputs.job_id }}
-          NUMBA_DISABLE_JIT: "1"
         run: python -u clip_producer_job.py
 
       - name: Write error status on failure
