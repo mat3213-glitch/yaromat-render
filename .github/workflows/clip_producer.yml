@@ -10,7 +10,7 @@ on:
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -55,6 +55,7 @@ jobs:
       - name: Run clip_producer_job.py
         env:
           JOB_ID: ${{ inputs.job_id }}
+          NUMBA_DISABLE_JIT: "1"
         run: python -u clip_producer_job.py
 
       - name: Write error status on failure
