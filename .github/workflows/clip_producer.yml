@@ -32,6 +32,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --fix-missing ffmpeg rclone
 
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-librosa-${{ runner.os }}-v1
+
+      - name: Install Python deps
+        run: pip install librosa scipy numpy
+
       - name: Configure rclone ydrive
         env:
           YDRIVE_CLIENT_ID:     ${{ secrets.YDRIVE_CLIENT_ID }}
