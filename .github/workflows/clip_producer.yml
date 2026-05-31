@@ -1,0 +1,57 @@
+name: Clip Producer
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Job ID (e.g. 2026-05-31_sun_clips)'
+        required: true
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-ffmpeg-rclone-${{ runner.os }}-v1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --fix-missing ffmpeg rclone
+
+      - name: Configure rclone ydrive
+        env:
+          YDRIVE_CLIENT_ID:     ${{ secrets.YDRIVE_CLIENT_ID }}
+          YDRIVE_CLIENT_SECRET: ${{ secrets.YDRIVE_CLIENT_SECRET }}
+          YDRIVE_TOKEN:         ${{ secrets.YDRIVE_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.config/rclone"
+          printf '[ydrive]\ntype = yandex\nclient_id = %s\nclient_secret = %s\ntoken = %s\n' \
+            "$YDRIVE_CLIENT_ID" "$YDRIVE_CLIENT_SECRET" "$YDRIVE_TOKEN" \
+            > "$HOME/.config/rclone/rclone.conf"
+
+      - name: Run clip_producer_job.py
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: python -u clip_producer_job.py
+
+      - name: Write error status on failure
+        if: failure()
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          rclone rcat "ydrive:Content factory/render_jobs/$JOB_ID/status.txt" \
+            <<< "error: workflow failed" || true
