@@ -32,18 +32,11 @@ jobs:
           YDRIVE_CLIENT_SECRET: ${{ secrets.YDRIVE_CLIENT_SECRET }}
           YDRIVE_TOKEN:         ${{ secrets.YDRIVE_TOKEN }}
         run: |
-          python3 -c "
-import os, pathlib
-cfg = '[ydrive]\ntype = yandex\nclient_id = {}\nclient_secret = {}\ntoken = {}\n'.format(
-    os.environ['YDRIVE_CLIENT_ID'],
-    os.environ['YDRIVE_CLIENT_SECRET'],
-    os.environ['YDRIVE_TOKEN'],
-)
-p = pathlib.Path.home() / '.config/rclone/rclone.conf'
-p.parent.mkdir(parents=True, exist_ok=True)
-p.write_text(cfg)
-print('rclone config written')
-"
+          mkdir -p "$HOME/.config/rclone"
+          printf '[ydrive]\ntype = yandex\nclient_id = %s\nclient_secret = %s\ntoken = %s\n' \
+            "$YDRIVE_CLIENT_ID" "$YDRIVE_CLIENT_SECRET" "$YDRIVE_TOKEN" \
+            > "$HOME/.config/rclone/rclone.conf"
+          echo "rclone config written"
 
       - name: Render
         env:
