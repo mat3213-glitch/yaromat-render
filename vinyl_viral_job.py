@@ -80,6 +80,107 @@ def ffrun(cmd: list, desc: str = ""):
         sys.exit(f"ffmpeg failed: {desc}")
 
 
+# ─── Clip prep (runs on GH Actions, no local ffmpeg on laptop) ───────────────
+
+def normalize_clip(src: Path, dst: Path, W: int, H: int, duration: int = 30):
+    ffrun([
+        "ffmpeg", "-y", "-stream_loop", "-1", "-t", str(duration), "-i", str(src),
+        "-vf", (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                f"crop={W}:{H},setsar=1,"
+                f"eq=brightness=0.02:contrast=1.05:saturation=0.72,fps={FPS}"),
+        "-c:v", "libx264", "-crf", "28", "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p", "-an", str(dst),
+    ], f"normalize {src.name}")
+
+
+def uniquize_clip(src: Path, dst: Path):
+    import random as _r
+    rr  = round(_r.uniform(0.84, 0.90), 3)
+    gg  = round(_r.uniform(0.88, 0.93), 3)
+    bb  = round(_r.uniform(1.07, 1.13), 3)
+    sat = round(_r.uniform(0.75, 0.85), 3)
+    ns  = _r.randint(7, 12)
+    vf  = (f"colorchannelmixer=rr={rr}:gg={gg}:bb={bb},"
+           f"eq=saturation={sat}:contrast=1.06:brightness=0.04,"
+           f"noise=alls={ns}:allf=t+u,unsharp=3:3:0.4:3:3:0.0,"
+           f"vignette=PI*0.24")
+    ffrun([
+        "ffmpeg", "-y", "-i", str(src), "-vf", vf,
+        "-c:v", "libx264", "-crf", "26", "-preset", "fast",
+        "-pix_fmt", "yuv420p", "-an", str(dst),
+    ], f"uniquize {src.name}")
+
+
+def loop_to_duration(src: Path, dst: Path, duration: float):
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(src)], capture_output=True, text=True)
+    src_dur = float(probe.stdout.strip() or "5")
+    repeat = math.ceil((duration + 2) / max(src_dur, 1)) + 1
+    concat_f = WORKDIR / "_concat_loop.txt"
+    concat_f.write_text("\n".join(f"file '{src}'" for _ in range(repeat)))
+    ffrun([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_f),
+        "-t", str(duration + 2),
+        "-c:v", "libx264", "-crf", "25", "-preset", "fast",
+        "-pix_fmt", "yuv420p", "-an", str(dst),
+    ], "loop to duration")
+
+
+def stretch_to_duration(src: Path, dst: Path, target: float):
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(src)], capture_output=True, text=True)
+    src_dur = float(probe.stdout.strip() or "5")
+    if src_dur >= target * 0.9:
+        loop_to_duration(src, dst, target)
+        return
+    factor = round(target / src_dur, 3)
+    print(f"  stretch ×{factor:.2f} ({src_dur:.1f}s → {target:.0f}s)")
+    ffrun([
+        "ffmpeg", "-y", "-i", str(src), "-vf", f"setpts={factor}*PTS",
+        "-c:v", "libx264", "-crf", "25", "-preset", "fast",
+        "-pix_fmt", "yuv420p", "-an", str(dst),
+    ], "stretch slow-motion")
+
+
+def prepare_overlay_segments(src: Path, dst: Path, W: int, H: int,
+                              seg_duration: float, total_duration: float):
+    """Normalize src then cut into BPM-aligned segments and concat."""
+    import random as _r
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(src)], capture_output=True, text=True)
+    src_dur = float(probe.stdout.strip() or "30")
+
+    n_segs = math.ceil((total_duration + 2) / max(seg_duration, 0.1))
+    seg_dir = WORKDIR / "overlay_segs"; seg_dir.mkdir(exist_ok=True)
+
+    seg_files = []
+    for i in range(n_segs):
+        max_start = max(0.0, src_dur - seg_duration - 0.2)
+        start = _r.uniform(0, max_start) if max_start > 0 else 0
+        seg_out = seg_dir / f"seg_{i:03d}.mp4"
+        ffrun([
+            "ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{seg_duration + 0.05:.3f}",
+            "-i", str(src),
+            "-vf", (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                    f"crop={W}:{H},setsar=1,fps={FPS}"),
+            "-c:v", "libx264", "-crf", "28", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", "-an", str(seg_out),
+        ], f"overlay seg {i+1}/{n_segs}")
+        seg_files.append(seg_out)
+
+    concat_f = seg_dir / "concat.txt"
+    concat_f.write_text("\n".join(f"file '{f}'" for f in seg_files))
+    ffrun([
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_f),
+        "-t", f"{total_duration + 2:.1f}",
+        "-c:v", "libx264", "-crf", "26", "-preset", "fast",
+        "-pix_fmt", "yuv420p", "-an", str(dst),
+    ], "concat overlay segments")
+
+
 # ─── Blend background (Pexels clips) ─────────────────────────────────────────
 
 def prepare_blend_bg(clip_paths: list, W: int, H: int, duration: float, tmp: Path) -> Path:
@@ -424,25 +525,47 @@ def main():
         bg_gen    = iter_video_frames(bg_video, W, H)
 
     elif bg_type == "video":
-        bg_vid = WORKDIR / "bg_video.mp4"
-        if not yd_get(f"{JOB_YD}/bg_video.mp4", bg_vid):
+        bg_vid_raw = WORKDIR / "bg_video_raw.mp4"
+        if not yd_get(f"{JOB_YD}/bg_video.mp4", bg_vid_raw):
             sys.exit("Failed: bg_video.mp4")
-        mb = bg_vid.stat().st_size / 1_048_576
+        mb = bg_vid_raw.stat().st_size / 1_048_576
         print(f"  bg_video.mp4 {mb:.1f}MB")
+        stretch_target = float(job.get("stretch_target", 0))
+        if stretch_target > 0:
+            bg_vid = WORKDIR / "bg_video.mp4"
+            stretch_to_duration(bg_vid_raw, bg_vid, stretch_target)
+        else:
+            bg_vid = bg_vid_raw
         bg_gen = iter_video_frames(bg_vid, W, H)
 
     elif bg_type == "overlay":
-        bg_vid = WORKDIR / "bg_video.mp4"
-        if not yd_get(f"{JOB_YD}/bg_video.mp4", bg_vid):
-            sys.exit("Failed: bg_video.mp4 (overlay base)")
-        ov_vid = WORKDIR / "overlay_video.mp4"
-        if not yd_get(f"{JOB_YD}/overlay_video.mp4", ov_vid):
-            sys.exit("Failed: overlay_video.mp4")
-        mb_b = bg_vid.stat().st_size / 1_048_576
-        mb_o = ov_vid.stat().st_size / 1_048_576
-        print(f"  base={mb_b:.1f}MB  overlay={mb_o:.1f}MB  opacity={overlay_opacity}")
-        bg_gen      = iter_video_frames(bg_vid, W, H)
-        overlay_gen = iter_video_frames(ov_vid, W, H)
+        # Download raw clips
+        clip_a_raw = WORKDIR / "clip_a.mp4"
+        clip_b_raw = WORKDIR / "clip_b.mp4"
+        if not yd_get(f"{JOB_YD}/clip_a.mp4", clip_a_raw):
+            sys.exit("Failed: clip_a.mp4")
+        if not yd_get(f"{JOB_YD}/clip_b.mp4", clip_b_raw):
+            sys.exit("Failed: clip_b.mp4")
+        mb_a = clip_a_raw.stat().st_size / 1_048_576
+        mb_b = clip_b_raw.stat().st_size / 1_048_576
+        seg_duration = float(job.get("overlay_seg_duration", 2.0))
+        print(f"  clip_a={mb_a:.1f}MB  clip_b={mb_b:.1f}MB  opacity={overlay_opacity}  seg={seg_duration:.2f}s")
+
+        # All prep runs on GH Actions
+        print("\n── Prep base (normalize → uniquize → loop) ──")
+        norm_a  = WORKDIR / "norm_a.mp4"
+        uniq_a  = WORKDIR / "uniq_a.mp4"
+        base_v  = WORKDIR / "base_video.mp4"
+        normalize_clip(clip_a_raw, norm_a, W, H, duration=35)
+        uniquize_clip(norm_a, uniq_a)
+        loop_to_duration(uniq_a, base_v, duration + 3)
+
+        print("\n── Prep overlay (normalize → BPM-segment) ──")
+        ov_v = WORKDIR / "overlay_video.mp4"
+        prepare_overlay_segments(clip_b_raw, ov_v, W, H, seg_duration, duration + 3)
+
+        bg_gen      = iter_video_frames(base_v, W, H)
+        overlay_gen = iter_video_frames(ov_v, W, H)
 
     else:
         sys.exit(f"Unknown bg_type: {bg_type}")
