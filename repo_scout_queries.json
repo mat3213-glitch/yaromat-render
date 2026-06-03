@@ -1,0 +1,57 @@
+[
+  {
+    "label": "ffmpeg python automation",
+    "category": "video",
+    "query": "ffmpeg python video automation OR pipeline"
+  },
+  {
+    "label": "beat synced video",
+    "category": "video",
+    "query": "beat sync video OR music visualizer OR audio reactive"
+  },
+  {
+    "label": "AI video generation",
+    "category": "video",
+    "query": "text to video OR image to video generation open source"
+  },
+  {
+    "label": "reels shorts generator",
+    "category": "video",
+    "query": "shorts OR reels generator automation"
+  },
+  {
+    "label": "audio beat detection",
+    "category": "audio",
+    "query": "beat detection OR onset OR tempo librosa OR aubio"
+  },
+  {
+    "label": "social media scheduler",
+    "category": "social",
+    "query": "social media scheduler self-hosted autopost"
+  },
+  {
+    "label": "playwright automation",
+    "category": "automation",
+    "query": "playwright automation scraper bot python"
+  },
+  {
+    "label": "content pipeline orchestration",
+    "category": "workflow",
+    "query": "content pipeline orchestration automation"
+  },
+  {
+    "label": "github actions media render",
+    "category": "workflow",
+    "query": "github actions ffmpeg OR video render"
+  },
+  {
+    "label": "telegram bot framework",
+    "category": "community",
+    "query": "telegram bot framework python media"
+  },
+  {
+    "label": "video uniquization",
+    "category": "video",
+    "query": "video uniquify OR deduplication OR variation generator"
+  }
+]

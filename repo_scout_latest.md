@@ -1,0 +1,79 @@
+# Repo Scout — 2026-06-04T01:19:19.120714
+
+Всего в шортлисте: 25
+
+- **OpenShot/openshot-qt** ⭐5829 [video]
+  - https://github.com/OpenShot/openshot-qt
+  - OpenShot Video Editor is an award-winning free and open-source video editor for Linux, Mac, and Windows, and is dedicated to delivering high quality video editi
+- **abhiTronix/vidgear** ⭐3713 [video]
+  - https://github.com/abhiTronix/vidgear
+  - A High-performance cross-platform Video Processing Python framework powerpacked with unique trailblazing features :fire:
+- **cirosantilli/china-dictatorship** ⭐3033 [automation]
+  - https://github.com/cirosantilli/china-dictatorship
+  - 反中共政治宣传库。Anti Chinese government propaganda. 住在中国真名用户的网友请别给星星，不然你要被警察请喝茶。常见问答集，新闻集和饭店和音乐建议。卐习万岁卐。冠状病毒审查郝海东新疆改造中心六四事件法轮功 996.ICU709大抓捕巴拿马文件邓家贵低端人口西藏骚乱。Friends wh
+- **Pulover/PuloversMacroCreator** ⭐1991 [automation]
+  - https://github.com/Pulover/PuloversMacroCreator
+  - Automation Utility - Recorder & Script Generator
+- **gege-circle/.github** ⭐1901 [automation]
+  - https://github.com/gege-circle/.github
+  - 这里是GitHub的草场，也是戈戈圈爱好者的交流地，主要讨论动漫、游戏、科技、人文、生活等所有话题，欢迎各位小伙伴们在此讨论趣事。This is GitHub grassland, and the community place for Gege circle lovers, mainly discusses anim
+- **chrisneagu/FTC-Skystone-Dark-Angels-Romania-2020** ⭐285 [automation]
+  - https://github.com/chrisneagu/FTC-Skystone-Dark-Angels-Romania-2020
+  - NOTICE This repository contains the public FTC SDK for the SKYSTONE (2019-2020) competition season. If you are looking for the current season's FTC SDK software
+- **DuxSec/videoGenerator** ⭐276 [social]
+  - https://github.com/DuxSec/videoGenerator
+  - Instagram Reels, Youtube shorts, tiktok video maker generator and uploader with music. Creates a video with an intro and main video containing a quote nicely fo
+- **ammaarreshi/openjourney** ⭐249 [video]
+  - https://github.com/ammaarreshi/openjourney
+  - Open-source clone of the MidJourney web interface featuring real AI image and video generation powered by Google's Gemini SDK. Use Imagen 4 to generate images a
+- **Sfedfcv/redesigned-pancake** ⭐236 [automation]
+  - https://github.com/Sfedfcv/redesigned-pancake
+  - Skip to content github / docs Code Issues 80 Pull requests 35 Discussions Actions Projects 2 Security Insights Merge branch 'main' into 1862-Add-Travis-CI-migra
+- **EtiennePerot/gladosvoicegen** ⭐212 [automation]
+  - https://github.com/EtiennePerot/gladosvoicegen
+  - GLaDOS voice generator - Windows/Melodyne GUI automation code
+- **jettbrains/-L-** ⭐143 [automation]
+  - https://github.com/jettbrains/-L-
+  - W3C Strategic Highlights  September 2019  This report was prepared for the September 2019 W3C Advisory Committee Meeting (W3C Member link). See the accompanying
+- **kameleo-io/kameleo** ⭐127 [automation]
+  - https://github.com/kameleo-io/kameleo
+  - Anti-detect browser for web scraping and automation. Engine-level fingerprint masking for Chromium and Firefox. Self-hosted, Docker-ready. Integrates with Selen
+- **linalinn/kicad-render** ⭐117 [video]
+  - https://github.com/linalinn/kicad-render
+  - github action for rendering kicad 3D images
+- **klonnet23/helloy-word** ⭐88 [automation]
+  - https://github.com/klonnet23/helloy-word
+  -     {   "releases": {     "2.0.4": [       "[Fixed] Refresh for Enterprise repositories did not handle API error querying branches - #7713",       "[Fixed] Miss
+- **qzw881130/AI-NovelFlow** ⭐81 [automation]
+  - https://github.com/qzw881130/AI-NovelFlow
+  - NovelFlow 是一个将小说自动转换为视频的 AI 平台。文生图、图生图、图生视频都是基于开源模型及B站大佬分享的工作流。（NovelFlow is an AI platform that automatically converts novels into videos. Text-to-image, image
+- **rramatchandran/big-o-performance-java** ⭐81 [automation]
+  - https://github.com/rramatchandran/big-o-performance-java
+  - # big-o-performance A simple html app to demonstrate performance costs of data structures.  - Clone the project - Navigate to the root of the project in a termi
+- **adithya-s-k/Storyblocks** ⭐68 [video]
+  - https://github.com/adithya-s-k/Storyblocks
+  - ✨ Experience the enchantment of Story Blocks: an open-source project merging AI text generation and image synthesis to create captivating video narratives. 📚🎥 W
+- **y-t-bot/youtube-bot** ⭐41 [automation]
+  - https://github.com/y-t-bot/youtube-bot
+  - youtube bot
+- **Z786ZA/instagram-scraper** ⭐39 [automation]
+  - https://github.com/Z786ZA/instagram-scraper
+  - instagram scraper engagement insights 
+- **y-t-bot/youtube-view-bot** ⭐37 [automation]
+  - https://github.com/y-t-bot/youtube-view-bot
+  - youtube view bot 
+- **y-t-bot/youtube-like-bot** ⭐31 [automation]
+  - https://github.com/y-t-bot/youtube-like-bot
+  - youtube like bot
+- **AEON-7/aeon-music-video** ⭐3 [video]
+  - https://github.com/AEON-7/aeon-music-video
+  - Audio-reactive music video builder. librosa-driven beat / onset / RMS detection drives ffmpeg filter chains for synced visual effects.
+- **ding7015869-alt/pixel-anime-player** ⭐3 [audio]
+  - https://github.com/ding7015869-alt/pixel-anime-player
+  - 🎵 Pixel Idol Desktop Music Player | 像素偶像桌面音乐播放器 — beat-reactive dancers, 6 VFX, lyric sync, photo pixelizer
+- **Yuyang-Ding1102/syncBeat** ⭐1 [audio]
+  - https://github.com/Yuyang-Ding1102/syncBeat
+  - A Reactive Kotlin Music Player with Real-Time LRC Sync.
+- **jeremyrayjewell/Cymatesserae** ⭐1 [video]
+  - https://github.com/jeremyrayjewell/Cymatesserae
+  - Audio-reactive visual engine for generating cymatic mosaics, beat-synced graphics, and exportable video from sound.

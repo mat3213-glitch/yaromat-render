@@ -1,0 +1,45 @@
+name: Repo Scout
+
+on:
+  schedule:
+    - cron: "0 10 * * 1"   # понедельник 10:00 UTC (GH schedule может задерживать)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -q requests
+
+      - name: Run scout
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOUDFLARE_WORKER: ${{ secrets.CLOUDFLARE_WORKER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SCOUT_CHAT_ID: ${{ secrets.SCOUT_CHAT_ID }}
+          SCOUT_THREAD_ID: ${{ secrets.SCOUT_THREAD_ID }}
+        run: python repo_scout.py --top 25
+
+      - name: Commit updated state
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add repo_scout_seen.json repo_scout_latest.md
+          if git diff --cached --quiet; then
+            echo "no state change"
+          else
+            git commit -m "repo-scout: update seen state [skip ci]"
+            git push
+          fi
