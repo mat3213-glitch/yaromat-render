@@ -53,7 +53,8 @@ def parse_color(h: str) -> tuple:
 
 def make_vinyl(size: int, label_art_path, title: str, track_name: str) -> "Image":
     """Рисует vinyl PNG (RGBA, прозрачный фон). Текст фиксирован — не вращается."""
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont, ImageChops
+    ImageChops_multiply = ImageChops.multiply
     img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     cx, cy = size // 2, size // 2
@@ -66,7 +67,7 @@ def make_vinyl(size: int, label_art_path, title: str, track_name: str) -> "Image
     groove_start = int(r * 0.30)
     step = max(3, size // 220)
     for gr in range(groove_start, int(r * 0.97), step):
-        draw.ellipse([cx-gr, cy-gr, cx+gr, cy+gr], outline=(35, 35, 46, 180), width=1)
+        draw.ellipse([cx-gr, cy-gr, cx+gr, cy+gr], outline=(55, 55, 72, 200), width=1)
 
     # Центральная метка
     lr = int(r * 0.27)
@@ -86,10 +87,22 @@ def make_vinyl(size: int, label_art_path, title: str, track_name: str) -> "Image
     hr = max(5, size // 110)
     draw.ellipse([cx-hr, cy-hr, cx+hr, cy+hr], fill=(6, 6, 8, 255))
 
-    # Блик (не вращается — он нарисован на пластинке, это ок)
-    hiw = int(r * 0.65)
-    draw.arc([cx-hiw, cy-r+10, cx+hiw, cy-r+10+int(r*0.1)],
-             start=210, end=330, fill=(70, 75, 95, 55), width=max(2, size//200))
+    # Шин — симуляция отражённого света (верхний левый сектор)
+    # Нарисован отдельным слоем, накладывается поверх пластинки
+    sheen = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(sheen)
+    # Большой светлый эллипс смещён влево-вверх, почти за пластинкой
+    sx, sy = int(cx - r * 0.25), int(cy - r * 0.25)
+    sw, sh = int(r * 1.1), int(r * 0.9)
+    # Рисуем несколько слоёв убывающей яркости
+    for alpha, expand in [(22, 0), (16, int(r*0.08)), (10, int(r*0.16))]:
+        sd.ellipse([sx-expand, sy-expand, sx+sw+expand, sy+sh+expand],
+                   fill=(160, 165, 185, alpha))
+    # Обрезаем по контуру пластинки (маскируем за пределами круга)
+    vinyl_mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(vinyl_mask).ellipse([cx-r, cy-r, cx+r, cy+r], fill=255)
+    sheen.putalpha(ImageChops_multiply(sheen.getchannel("A"), vinyl_mask))
+    img = Image.alpha_composite(img, sheen)
 
     return img
 
@@ -108,22 +121,24 @@ def make_label_overlay(W: int, H: int, title: str, track_name: str) -> "Image":
     except Exception:
         fnt_b = fnt_r = ImageFont.load_default()
 
-    # Позиция: под виниловой пластинкой
-    vinyl_size = int(min(W, H) * 0.82)
+    # Позиция: под виниловой пластинкой (vinyl_size = 0.72 от кадра)
+    vinyl_size = int(min(W, H) * 0.72)
     vy_center  = H // 2
-    text_y     = vy_center + vinyl_size // 2 + max(10, H // 60)
+    text_y     = vy_center + vinyl_size // 2 + max(14, H // 55)
 
-    for fnt, text, dy in [(fnt_b, title, 0), (fnt_r, track_name, fs_title + 6)]:
+    for fnt, text, fs, dy in [
+        (fnt_b, title,      fs_title, 0),
+        (fnt_r, track_name, fs_track, fs_title + 10),
+    ]:
         if not text:
             continue
         bb = draw.textbbox((0, 0), text, font=fnt)
         tw = bb[2] - bb[0]
         x = (W - tw) // 2
         y = text_y + dy
-        if y + fs_title < H - 20:  # только если влезает
-            # лёгкая тень
-            draw.text((x+2, y+2), text, font=fnt, fill=(0, 0, 0, 120))
-            draw.text((x, y), text, font=fnt, fill=(210, 215, 228, 230))
+        if y + fs < H - 10:
+            draw.text((x+2, y+2), text, font=fnt, fill=(0, 0, 0, 130))
+            draw.text((x, y), text, font=fnt, fill=(210, 215, 228, 235))
 
     return img
 
@@ -204,7 +219,7 @@ def main():
     print("\n── PIL assets ──")
     subprocess.run(["pip", "install", "-q", "Pillow", "numpy"], capture_output=True)
 
-    vinyl_size = int(min(W, H) * 0.82)
+    vinyl_size = int(min(W, H) * 0.72)
     vinyl  = make_vinyl(vinyl_size, label_art, title, track_name)
     bg     = make_bg(W, H, bg_rgb)
     label  = make_label_overlay(W, H, title, track_name)
