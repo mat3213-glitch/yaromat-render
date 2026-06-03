@@ -303,7 +303,8 @@ def render(bg_gen, cd_disc: Image.Image, sheen: Image.Image,
            text_base: Image.Image, vignette: Image.Image,
            W: int, H: int, vinyl_size: int,
            duration: float, track_path: Path, audio_start: float,
-           out_path: Path) -> int:
+           out_path: Path,
+           overlay_gen=None, overlay_opacity: float = 0.4) -> int:
 
     total      = int(duration * FPS)
     angle_step = 360.0 * RPS / FPS
@@ -330,7 +331,12 @@ def render(bg_gen, cd_disc: Image.Image, sheen: Image.Image,
 
     with subprocess.Popen(cmd, stdin=subprocess.PIPE) as proc:
         for i in range(total):
-            frame = next(bg_gen).convert("RGBA")
+            bg_frame = next(bg_gen)
+            if overlay_gen:
+                ov_frame = next(overlay_gen)
+                frame = Image.blend(bg_frame, ov_frame, overlay_opacity).convert("RGBA")
+            else:
+                frame = bg_frame.convert("RGBA")
 
             # CD rotating
             angle   = angle_step * i
@@ -396,6 +402,9 @@ def main():
     label_art = label_art_file if label_art_file.exists() else None
 
     # ── Background source → generator ───────────────────────────────────────
+    overlay_gen     = None
+    overlay_opacity = float(job.get("overlay_opacity", 0.4))
+
     if bg_type == "blend":
         clip_urls = job.get("clip_urls", [])
         if not clip_urls:
@@ -422,6 +431,19 @@ def main():
         print(f"  bg_video.mp4 {mb:.1f}MB")
         bg_gen = iter_video_frames(bg_vid, W, H)
 
+    elif bg_type == "overlay":
+        bg_vid = WORKDIR / "bg_video.mp4"
+        if not yd_get(f"{JOB_YD}/bg_video.mp4", bg_vid):
+            sys.exit("Failed: bg_video.mp4 (overlay base)")
+        ov_vid = WORKDIR / "overlay_video.mp4"
+        if not yd_get(f"{JOB_YD}/overlay_video.mp4", ov_vid):
+            sys.exit("Failed: overlay_video.mp4")
+        mb_b = bg_vid.stat().st_size / 1_048_576
+        mb_o = ov_vid.stat().st_size / 1_048_576
+        print(f"  base={mb_b:.1f}MB  overlay={mb_o:.1f}MB  opacity={overlay_opacity}")
+        bg_gen      = iter_video_frames(bg_vid, W, H)
+        overlay_gen = iter_video_frames(ov_vid, W, H)
+
     else:
         sys.exit(f"Unknown bg_type: {bg_type}")
 
@@ -438,7 +460,8 @@ def main():
     result = WORKDIR / out_name
     print(f"\n── Rendering {int(duration * FPS)} frames → ffmpeg ──")
     ret = render(bg_gen, cd_disc, sheen, text_base, vignette,
-                 W, H, vinyl_size, duration, track_file, audio_start, result)
+                 W, H, vinyl_size, duration, track_file, audio_start, result,
+                 overlay_gen=overlay_gen, overlay_opacity=overlay_opacity)
 
     if ret != 0 or not result.exists() or result.stat().st_size < 10_000:
         yd_put_text(f"error: ffmpeg rc={ret}", f"{JOB_YD}/status.txt")
