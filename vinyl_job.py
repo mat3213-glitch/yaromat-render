@@ -2,26 +2,14 @@
 """
 vinyl_job.py — GitHub Actions runner: spinning vinyl record teaser.
 
-Steps:
-  1. Download job.json + track.mp3 + (optional) label_art.png from ЯД
-  2. Generate vinyl PNG with PIL (black record + grooves + center label)
-  3. Generate dark atmospheric background
-  4. ffmpeg: spin vinyl (33.3 RPM) over background + mix track segment + fade
-  5. Upload result.mp4 + status.txt to ЯД
+PIL рендерит каждый кадр (rotate+composite), пайпит в ffmpeg.
+Без filter_complex — чисто и предсказуемо.
 
-job.json:
-  {"duration": 30, "format": "square|vertical", "out_name": "name.mp4",
-   "audio_start": 0, "title": "YAROMAT", "track_name": "взрослый",
-   "bg_color": "0x0a0a12"}   ← опционально
-
+job.json: {duration, format, out_name, audio_start, title, track_name, bg_color}
 Environment: JOB_ID
 """
 
-import json
-import math
-import os
-import subprocess
-import sys
+import json, math, os, subprocess, sys
 from pathlib import Path
 
 JOB_ID = os.environ.get("JOB_ID", "")
@@ -34,14 +22,12 @@ JOB_YD  = f"{JOBS_YD}/{JOB_ID}"
 WORKDIR = Path("/tmp/vinyl_job")
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
-FMT_DIMS = {
-    "square":   (1080, 1080),
-    "vertical": (1080, 1920),
-}
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FMT_DIMS = {"square": (1080, 1080), "vertical": (1080, 1920)}
+FONT     = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT_REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 RPM = 33.333
-RPS = RPM / 60.0  # rotations per second
+RPS = RPM / 60.0
+FPS = 25
 
 
 def yd_get(remote_path: str, local: Path) -> bool:
@@ -56,129 +42,142 @@ def yd_put(local: Path, remote_path: str) -> bool:
     return r.returncode == 0
 
 def yd_put_text(text: str, remote_path: str):
-    tmp = WORKDIR / "_status.txt"
-    tmp.write_text(text)
-    yd_put(tmp, remote_path)
+    tmp = WORKDIR / "_s.txt"; tmp.write_text(text); yd_put(tmp, remote_path)
 
 
-def hex_to_rgb(h: str):
-    h = h.lstrip("0x").lstrip("#")
-    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+def parse_color(h: str) -> tuple:
+    """'0x0a0a12' или '#0a0a12' → (10, 10, 18). Безопасно."""
+    h = h.strip().replace("0x", "").replace("#", "").zfill(6)
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
-def generate_vinyl(
-    out: Path,
-    size: int,
-    label_art: Path | None,
-    title: str,
-    track_name: str,
-    bg_color_hex: str = "0x0a0a12",
-):
-    """Рисует vinyl record PNG: квадратный, фон прозрачный, запись чёрная."""
-    from PIL import Image, ImageDraw, ImageFont, ImageFilter
-
-    bg_rgb = hex_to_rgb(bg_color_hex)
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+def make_vinyl(size: int, label_art_path, title: str, track_name: str) -> "Image":
+    """Рисует vinyl PNG (RGBA, прозрачный фон). Текст фиксирован — не вращается."""
+    from PIL import Image, ImageDraw, ImageFont
+    img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     cx, cy = size // 2, size // 2
-    r = size // 2 - 4  # радиус пластинки
+    r = size // 2 - 6
 
-    # ── Тело пластинки (чёрный круг)
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(12, 12, 18, 255))
+    # Тело пластинки
+    draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=(14, 14, 20, 255))
 
-    # ── Дорожки (тонкие концентрические кольца, чуть светлее)
+    # Дорожки
     groove_start = int(r * 0.30)
-    groove_end   = int(r * 0.96)
-    step = max(3, size // 200)
-    for gr in range(groove_start, groove_end, step):
-        lw = 1
-        col = (32, 32, 40, 160)
-        draw.ellipse([cx - gr, cy - gr, cx + gr, cy + gr], outline=col, width=lw)
+    step = max(3, size // 220)
+    for gr in range(groove_start, int(r * 0.97), step):
+        draw.ellipse([cx-gr, cy-gr, cx+gr, cy+gr], outline=(35, 35, 46, 180), width=1)
 
-    # ── Центральная метка
-    label_r = int(r * 0.28)
-    if label_art and label_art.exists():
-        art = Image.open(label_art).convert("RGBA")
-        art = art.resize((label_r * 2, label_r * 2), Image.LANCZOS)
-        # круговая маска
-        mask = Image.new("L", (label_r * 2, label_r * 2), 0)
-        ImageDraw.Draw(mask).ellipse([0, 0, label_r * 2 - 1, label_r * 2 - 1], fill=255)
+    # Центральная метка
+    lr = int(r * 0.27)
+    if label_art_path and label_art_path.exists():
+        art = Image.open(label_art_path).convert("RGBA").resize((lr*2, lr*2), Image.LANCZOS)
+        mask = Image.new("L", (lr*2, lr*2), 0)
+        ImageDraw.Draw(mask).ellipse([0, 0, lr*2-1, lr*2-1], fill=255)
         art.putalpha(mask)
-        img.paste(art, (cx - label_r, cy - label_r), art)
+        img.paste(art, (cx-lr, cy-lr), art)
     else:
-        # градиентная метка: тёмно-синяя
-        for i in range(label_r, 0, -1):
-            t = 1 - i / label_r
-            c = (int(10 + 30 * t), int(10 + 20 * t), int(30 + 50 * t), 255)
-            draw.ellipse([cx - i, cy - i, cx + i, cy + i], fill=c)
+        for i in range(lr, 0, -1):
+            t = 1 - i / lr
+            c = (int(12+28*t), int(12+18*t), int(35+45*t), 255)
+            draw.ellipse([cx-i, cy-i, cx+i, cy+i], fill=c)
 
-        # Текст на метке
-        fontsize_title = max(12, label_r // 4)
-        fontsize_track = max(10, label_r // 6)
-        try:
-            fnt_bold = ImageFont.truetype(FONT, fontsize_title)
-            fnt_reg  = ImageFont.truetype(FONT_REG, fontsize_track)
-        except Exception:
-            fnt_bold = fnt_reg = ImageFont.load_default()
+    # Шпиндель
+    hr = max(5, size // 110)
+    draw.ellipse([cx-hr, cy-hr, cx+hr, cy+hr], fill=(6, 6, 8, 255))
 
-        # Название артиста
-        bbox = draw.textbbox((0, 0), title, font=fnt_bold)
-        tw = bbox[2] - bbox[0]
-        draw.text((cx - tw // 2, cy - fontsize_title - 4), title,
-                  font=fnt_bold, fill=(220, 220, 230, 255))
-        # Название трека
-        bbox2 = draw.textbbox((0, 0), track_name, font=fnt_reg)
-        tw2 = bbox2[2] - bbox2[0]
-        draw.text((cx - tw2 // 2, cy + 4), track_name,
-                  font=fnt_reg, fill=(160, 165, 180, 255))
+    # Блик (не вращается — он нарисован на пластинке, это ок)
+    hiw = int(r * 0.65)
+    draw.arc([cx-hiw, cy-r+10, cx+hiw, cy-r+10+int(r*0.1)],
+             start=210, end=330, fill=(70, 75, 95, 55), width=max(2, size//200))
 
-    # ── Центральное отверстие (шпиндель)
-    hole_r = max(4, size // 120)
-    draw.ellipse([cx - hole_r, cy - hole_r, cx + hole_r, cy + hole_r],
-                 fill=(0, 0, 0, 255))
-
-    # ── Блик (тонкий полукруг вверху)
-    hiw = int(r * 0.7)
-    hih = int(r * 0.12)
-    draw.arc([cx - hiw, cy - r + 8, cx + hiw, cy - r + 8 + hih],
-             start=200, end=340, fill=(80, 85, 100, 60), width=max(2, size // 180))
-
-    img.save(out, "PNG")
-    print(f"  vinyl.png: {out.stat().st_size // 1024}KB")
+    return img
 
 
-def generate_bg(out: Path, W: int, H: int, bg_color_hex: str):
-    """Тёмный атмосферный фон через PIL — градиент + лёгкий шум."""
-    from PIL import Image, ImageFilter
-    import random as _rnd
-
-    bg_rgb = hex_to_rgb(bg_color_hex)
-    img = Image.new("RGB", (W, H), bg_rgb)
-    # виньетка: затемнение по краям
-    from PIL import ImageDraw
+def make_label_overlay(W: int, H: int, title: str, track_name: str) -> "Image":
+    """Статичная текстовая плашка поверх видео (не вращается)."""
+    from PIL import Image, ImageDraw, ImageFont
+    img  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    steps = 60
-    for i in range(steps):
-        t = i / steps
-        alpha = int(120 * (1 - t) ** 2)
-        r = int(W * 0.5 * (1 - t * 0.5))
-        g = int(H * 0.5 * (1 - t * 0.5))
-        c = tuple(max(0, v - int(40 * (1 - t))) for v in bg_rgb)
-        # рисуем от краёв
-        draw.rectangle([i * W // (steps * 2), i * H // (steps * 2),
-                        W - i * W // (steps * 2), H - i * H // (steps * 2)],
-                       outline=(*c, alpha))
-    img = img.filter(ImageFilter.GaussianBlur(radius=8))
-    img.save(out, "PNG")
-    print(f"  bg.png: {out.stat().st_size // 1024}KB")
+
+    fs_title = max(14, W // 22)
+    fs_track = max(12, W // 32)
+    try:
+        fnt_b = ImageFont.truetype(FONT, fs_title)
+        fnt_r = ImageFont.truetype(FONT_REG, fs_track)
+    except Exception:
+        fnt_b = fnt_r = ImageFont.load_default()
+
+    # Позиция: под виниловой пластинкой
+    vinyl_size = int(min(W, H) * 0.82)
+    vy_center  = H // 2
+    text_y     = vy_center + vinyl_size // 2 + max(10, H // 60)
+
+    for fnt, text, dy in [(fnt_b, title, 0), (fnt_r, track_name, fs_title + 6)]:
+        if not text:
+            continue
+        bb = draw.textbbox((0, 0), text, font=fnt)
+        tw = bb[2] - bb[0]
+        x = (W - tw) // 2
+        y = text_y + dy
+        if y + fs_title < H - 20:  # только если влезает
+            # лёгкая тень
+            draw.text((x+2, y+2), text, font=fnt, fill=(0, 0, 0, 120))
+            draw.text((x, y), text, font=fnt, fill=(210, 215, 228, 230))
+
+    return img
+
+
+def make_bg(W: int, H: int, bg_rgb: tuple) -> "Image":
+    """Тёмный фон с радиальной виньеткой (numpy)."""
+    import numpy as np
+    from PIL import Image
+
+    Y, X = np.ogrid[:H, :W]
+    dist = np.sqrt((X - W/2)**2 + (Y - H/2)**2)
+    max_d = math.sqrt((W/2)**2 + (H/2)**2)
+    vig = np.clip(1.0 - 0.65 * (dist / max_d) ** 1.4, 0.2, 1.0)
+
+    arr = np.array(bg_rgb, dtype=np.float32) * vig[..., np.newaxis]
+    arr = arr.clip(0, 255).astype(np.uint8)
+    return Image.fromarray(arr, "RGB")
+
+
+def render_frames(
+    bg: "Image", vinyl: "Image", label: "Image",
+    W: int, H: int, vinyl_size: int,
+    duration: float, ffmpeg_proc,
+):
+    """Рендерит кадры PIL и пишет RGB bytes в stdin ffmpeg."""
+    from PIL import Image
+
+    vx = (W - vinyl_size) // 2
+    vy = (H - vinyl_size) // 2
+    total = int(duration * FPS)
+    angle_step = 360.0 * RPS / FPS  # градусы на кадр
+
+    for i in range(total):
+        angle = angle_step * i
+        rotated = vinyl.rotate(-angle, resample=Image.BICUBIC, expand=False)
+        frame = bg.copy().convert("RGBA")
+        frame.paste(rotated, (vx, vy), rotated)
+        # Статичный текст поверх
+        frame = Image.alpha_composite(frame, label)
+        ffmpeg_proc.stdin.write(frame.convert("RGB").tobytes())
+
+        if i % 125 == 0:
+            print(f"  frame {i}/{total} ({i*100//total}%)", flush=True)
+
+    ffmpeg_proc.stdin.close()
 
 
 def main():
-    print(f"Job ID: {JOB_ID}")
+    print(f"Job: {JOB_ID}")
 
+    # 1. Download
     job_file = WORKDIR / "job.json"
     if not yd_get(f"{JOB_YD}/job.json", job_file):
-        sys.exit("Failed to download job.json")
+        sys.exit("Failed: job.json")
     job = json.loads(job_file.read_text())
 
     duration    = float(job["duration"])
@@ -189,73 +188,61 @@ def main():
     track_name  = job.get("track_name", "")
     bg_color    = job.get("bg_color", "0x0a0a12")
     W, H = FMT_DIMS.get(fmt, FMT_DIMS["square"])
-    print(f"  {W}x{H}  dur={duration}s  audio_start={audio_start}s  rpm={RPM}")
+    bg_rgb = parse_color(bg_color)
+
+    print(f"  {W}x{H} {duration}s audio_start={audio_start}s bg={bg_rgb}")
 
     track_file = WORKDIR / "track.mp3"
     if not yd_get(f"{JOB_YD}/track.mp3", track_file):
-        sys.exit("Failed to download track.mp3")
+        sys.exit("Failed: track.mp3")
 
     label_art = WORKDIR / "label_art.png"
     if not yd_get(f"{JOB_YD}/label_art.png", label_art):
         label_art = None
-        print("  no label_art.png — drawing text label")
 
-    print("\n── Generating vinyl & background (PIL) ──")
-    subprocess.run(["pip", "install", "-q", "Pillow"], capture_output=True)
-    from importlib import import_module  # re-import after install
+    # 2. Generate assets
+    print("\n── PIL assets ──")
+    subprocess.run(["pip", "install", "-q", "Pillow", "numpy"], capture_output=True)
 
     vinyl_size = int(min(W, H) * 0.82)
-    vinyl_png  = WORKDIR / "vinyl.png"
-    bg_png     = WORKDIR / "bg.png"
+    vinyl  = make_vinyl(vinyl_size, label_art, title, track_name)
+    bg     = make_bg(W, H, bg_rgb)
+    label  = make_label_overlay(W, H, title, track_name)
+    vx, vy = (W - vinyl_size) // 2, (H - vinyl_size) // 2
+    print(f"  vinyl {vinyl_size}px  bg {W}x{H}  vx={vx} vy={vy}")
 
-    generate_vinyl(vinyl_png, vinyl_size, label_art, title, track_name, bg_color)
-    generate_bg(bg_png, W, H, bg_color)
-
-    # Позиция центра винила на кадре
-    vx = (W - vinyl_size) // 2
-    vy = (H - vinyl_size) // 2
-
+    # 3. Render frames → ffmpeg
     result    = WORKDIR / out_name
     afade_out = max(0.0, duration - 1.5)
-    # 33.3 RPM = 2π * 0.556 rad/s
-    angle_expr = f"2*PI*{RPS:.4f}*t"
-
-    # Фильтр:
-    # 1. bg — статичный фон
-    # 2. vinyl — rotate(33RPM) с чёрным fillcolor, crop к vinyl_size×vinyl_size
-    # 3. overlay vinyl поверх bg по центру
-    vf = (
-        f"[0:v]scale={W}:{H}[bg];"
-        f"[1:v]rotate='{angle_expr}':fillcolor=0x0a0a12@0:oh={vinyl_size}:ow={vinyl_size}[vr];"
-        f"[bg][vr]overlay={vx}:{vy}[out]"
-    )
-
-    print("\n── ffmpeg render ──")
     cmd = [
         "ffmpeg", "-y",
-        "-loop", "1", "-t", str(duration + 1), "-i", str(bg_png),
-        "-loop", "1", "-t", str(duration + 1), "-i", str(vinyl_png),
+        "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{W}x{H}", "-pix_fmt", "rgb24", "-r", str(FPS), "-i", "pipe:0",
         "-ss", str(audio_start), "-t", str(duration), "-i", str(track_file),
-        "-filter_complex", vf, "-map", "[out]", "-map", "2:a",
+        "-map", "0:v", "-map", "1:a",
         "-af", f"afade=t=in:st=0:d=1,afade=t=out:st={afade_out}:d=1.5",
-        "-t", str(duration),
-        "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-r", "25",
+        "-c:v", "libx264", "-crf", "23", "-preset", "fast",
         "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p",
-        str(result),
+        "-t", str(duration), str(result),
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0 or not result.exists() or result.stat().st_size < 5000:
-        print(r.stderr[-800:])
-        yd_put_text(f"error: ffmpeg rc={r.returncode}", f"{JOB_YD}/status.txt")
-        sys.exit("ffmpeg failed")
+
+    print(f"\n── Rendering {int(duration*FPS)} frames → ffmpeg ──")
+    with subprocess.Popen(cmd, stdin=subprocess.PIPE) as proc:
+        render_frames(bg, vinyl, label, W, H, vinyl_size, duration, proc)
+        ret = proc.wait()
+
+    if ret != 0 or not result.exists() or result.stat().st_size < 5000:
+        yd_put_text(f"error: ffmpeg rc={ret}", f"{JOB_YD}/status.txt")
+        sys.exit(f"ffmpeg failed rc={ret}")
 
     mb = result.stat().st_size / 1024 / 1024
-    print(f"  {out_name}  {mb:.1f}MB")
+    print(f"  {out_name} {mb:.1f}MB")
 
-    print(f"\n── Uploading ──")
+    # 4. Upload
+    print("\n── Uploading ──")
     if not yd_put(result, f"{JOB_YD}/{out_name}"):
         yd_put_text("error: upload failed", f"{JOB_YD}/status.txt")
-        sys.exit("Upload failed")
+        sys.exit("upload failed")
 
     yd_put_text("done", f"{JOB_YD}/status.txt")
     print(f"\n✅ Done: {out_name} ({mb:.1f}MB)")
