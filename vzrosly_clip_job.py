@@ -67,26 +67,136 @@ def make_cover(src: Path, dst: Path, W: int, H: int, zoom: float = 1.0, flip: bo
          "-frames:v", "1", str(dst)])
 
 
+def motion_seg(cover: Path, dur: float, mode: str, theta: float, blend: str,
+               out: Path, W: int, H: int) -> bool:
+    """Сегмент-видео: 2 копии арта дрейфуют в противоположные стороны + blend
+    (двойная экспозиция → виден бленд + движение). mode: pan|zoom|single."""
+    enc = ["-r", str(FPS), "-c:v", "libx264", "-crf", "22", "-preset", "veryfast",
+           "-video_track_timescale", "12800", str(out)]
+    BW, BH = int(W * 1.30), int(H * 1.30)
+    pre = f"scale={BW}:{BH}:force_original_aspect_ratio=increase,crop={BW}:{BH}"
+    mx, my = BW - W, BH - H          # margins
+    cx, cy = mx / 2, my / 2
+    ax, ay = mx / 2 * math.cos(theta), my / 2 * math.sin(theta)
+    # нормированное время 0..1: s = (t/dur). дрейф через центр: (s*2-1)
+    def panx(sign): return f"{cx:.1f}+({sign}({ax:.2f}))*((t/{dur:.4f})*2-1)"
+    def pany(sign): return f"{cy:.1f}+({sign}({ay:.2f}))*((t/{dur:.4f})*2-1)"
+
+    if mode == "single":   # один слой, нежный дрейф (для outro/рисунка)
+        fc = (f"[0]{pre},crop={W}:{H}:x='{panx('+')}':y='{pany('+')}',"
+              f"format=yuv420p[v]")
+    elif mode == "zoom":   # слой A — наезд, слой B — отъезд, blend
+        zin  = f"'{W}*(1-0.16*(t/{dur:.4f}))'"
+        zinh = f"'{H}*(1-0.16*(t/{dur:.4f}))'"
+        zout = f"'{W}*(0.84+0.16*(t/{dur:.4f}))'"
+        zouth= f"'{H}*(0.84+0.16*(t/{dur:.4f}))'"
+        fc = (f"[0]{pre},split[a][b];"
+              f"[a]crop=w={zin}:h={zinh}:x='(iw-ow)/2':y='(ih-oh)/2',scale={W}:{H},setsar=1[ca];"
+              f"[b]crop=w={zout}:h={zouth}:x='(iw-ow)/2':y='(ih-oh)/2',scale={W}:{H},setsar=1[cb];"
+              f"[ca][cb]blend=all_mode={blend}:all_opacity=0.5,format=yuv420p[v]")
+    else:                  # pan — слои дрейфуют в противоположные стороны
+        fc = (f"[0]{pre},split[a][b];"
+              f"[a]crop={W}:{H}:x='{panx('+')}':y='{pany('+')}',setsar=1[ca];"
+              f"[b]crop={W}:{H}:x='{panx('-')}':y='{pany('-')}',setsar=1[cb];"
+              f"[ca][cb]blend=all_mode={blend}:all_opacity=0.5,format=yuv420p[v]")
+    r = run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-t", f"{dur:.4f}",
+             "-i", str(cover), "-filter_complex", fc, "-map", "[v]"] + enc)
+    if r.returncode != 0:
+        print("motion_seg:", r.stderr[-400:])
+    return r.returncode == 0 and out.exists()
+
+
+def probe_dur(p: Path) -> float:
+    r = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(p)])
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def xfade_chain(segs, durs, trans, tdurs, out: Path) -> bool:
+    """Склейка сегментов через xfade с разными переходами. Возвращает успех.
+    segs[i] — путь, durs[i] — реальная длительность, trans[i]/tdurs[i] — переход
+    ВХОДА в сегмент i (i>=1)."""
+    inputs = []
+    for s in segs:
+        inputs += ["-i", str(s)]
+    parts = []
+    prev = "0:v"
+    running = durs[0]
+    for i in range(1, len(segs)):
+        d = tdurs[i]
+        off = max(0.0, running - d)
+        lbl = f"x{i}"
+        parts.append(f"[{prev}][{i}:v]xfade=transition={trans[i]}:"
+                     f"duration={d:.3f}:offset={off:.3f}[{lbl}]")
+        prev = lbl
+        running = running + durs[i] - d
+    fc = ";".join(parts)
+    r = run(["ffmpeg", "-y", "-loglevel", "error"] + inputs +
+            ["-filter_complex", fc, "-map", f"[{prev}]",
+             "-r", str(FPS), "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+             "-pix_fmt", "yuv420p", str(out)])
+    if r.returncode != 0:
+        print("xfade_chain:", r.stderr[-600:])
+    return r.returncode == 0 and out.exists()
+
+
+import random
+
+# 8 направлений дрейфа (радианы) для двойной экспозиции
+DIRS = [i * math.pi / 4 for i in range(8)]
+# палитра переходов xfade для грува/выдоха (разнообразие «смены кадров»)
+GROOVE_TR = ["dissolve", "wipeleft", "wiperight", "slideup", "slidedown",
+             "smoothright", "smoothleft", "circleopen", "fadegrays"]
+STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
+             "fadeblack", "slideup", "fade", "fadewhite"]
+
+
 def build_timeline():
-    """Список (image_key, dur) по ритм-карте. Сумма = duration."""
+    """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur). Сумма dur = 28."""
+    random.seed(42)  # детерминизм: square и vertical монтируются одинаково
     b = BEAT
-    seq = []
-    # 0:00–0:04 held intro — anchor
-    seq.append(("anchor", 6 * b))                 # 4.14
-    # groove — cut/1 доля, чередование cold+anchor-вспышки
+    raw = []
+    raw.append(("anchor", 6 * b, "intro"))                 # 0: held intro
     groove = ["c1", "anchor", "clock", "c2", "anchor", "crowd",
-              "c3", "anchor", "c4", "a1", "anchor", "a2"]       # 12 × 1b = 8.28
-    seq += [(k, b) for k in groove]
-    # strobe — cut/½ доли, плотная очередь (20 × 0.5b = 6.90), богатый пул разнофактурных кадров
+              "c3", "anchor", "c4", "a1", "anchor", "a2"]
+    raw += [(k, b, "groove") for k in groove]              # 1..12
     strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
                    "a1", "c4", "crowd", "c1f", "a2f", "c2f", "clock", "c4f"]
     for i in range(20):
-        seq.append((strobe_pool[i % len(strobe_pool)], 0.5 * b))
-    # 0:20–0:24 held breath — anchor punch (ближе)
-    seq.append(("anchorp", 6 * b))                # 4.14
-    # outro — тёплый детский рисунок
-    seq.append(("child", 4.54))
-    total = sum(d for _, d in seq)
+        raw.append((strobe_pool[i % len(strobe_pool)], 0.5 * b, "strobe"))  # 13..32
+    raw.append(("anchorp", 6 * b, "breath"))               # 33: held breath
+    raw.append(("child", 4.54, "outro"))                   # 34: warm outro
+
+    seq = []
+    for i, (key, dur, region) in enumerate(raw):
+        # движение: held — мягкий дрейф; грув/строб — полный + случайный zoom; outro — нежный single
+        if region in ("intro", "breath"):
+            mode, blend = "pan", "average"
+        elif region == "outro":
+            mode, blend = "single", "none"
+        else:
+            mode = "pan"   # направление дрейфа задаёт theta (8 вариантов) → разнообразие движения
+            blend = random.choice(["average", "average", "screen", "lighten"])
+        theta = random.choice(DIRS)
+        # переход ВХОД в сегмент i (граница i-1 → i)
+        if i == 0:
+            tin, tdur = None, 0.0
+        elif region == "groove":
+            tin, tdur = random.choice(GROOVE_TR), 0.15
+        elif region == "strobe":
+            tin, tdur = random.choice(STROBE_TR), (0.05 if raw[i][1] < 0.4 else 0.1)
+        elif region == "breath":
+            tin, tdur = random.choice(["fadeblack", "dissolve"]), 0.30
+        elif region == "outro":
+            tin, tdur = "fadewhite", 0.40    # вспышка в белый → тёплый переворот
+        else:
+            tin, tdur = "fade", 0.05
+        seq.append(dict(key=key, dur=dur, mode=mode, theta=theta,
+                        blend=blend, tin=tin, tdur=tdur))
+    total = sum(s["dur"] for s in seq)
     return seq, total
 
 
@@ -134,30 +244,29 @@ def main():
         make_cover(WORK / src, p, W, H, zoom, flip)
         cover_path[key] = p
 
-    # timeline → каждый сегмент в короткий mp4, затем concat encoded (кросс-версийно надёжно)
+    # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
     seq, total = build_timeline()
-    duration = round(total, 3)
-    print(f"  segments={len(seq)} duration={duration}s")
+    nominal = round(total, 3)
+    print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
-    seg_files = []
-    for i, (key, dur) in enumerate(seq):
+    seg_files, durs, trans, tdurs = [], [], [], []
+    for i, s in enumerate(seq):
         sp = segdir / f"seg_{i:03d}.mp4"
-        r = run(["ffmpeg", "-y", "-loglevel", "error",
-                 "-loop", "1", "-t", f"{dur:.4f}", "-i", str(cover_path[key]),
-                 "-r", str(FPS), "-vf", "format=yuv420p",
-                 "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
-                 "-video_track_timescale", "12800", str(sp)])
-        if r.returncode != 0 or not sp.exists():
-            print(r.stderr[-500:]); yd_put_text(f"error: seg {i}", f"{JOB_YD}/status.txt"); sys.exit("seg fail")
+        # длиннее на величину входящего перехода — xfade «съест» этот overlap, нетто=план
+        enc_dur = s["dur"] + s["tdur"]
+        if not motion_seg(cover_path[s["key"]], enc_dur, s["mode"], s["theta"],
+                          s["blend"], sp, W, H):
+            yd_put_text(f"error: seg {i}", f"{JOB_YD}/status.txt"); sys.exit("seg fail")
         seg_files.append(sp)
-    concat = WORK / "concat.txt"
-    concat.write_text("\n".join(f"file '{p}'" for p in seg_files))
+        durs.append(probe_dur(sp))
+        trans.append(s["tin"] or "fade")
+        tdurs.append(s["tdur"])
 
     body = WORK / "body.mp4"
-    r = run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
-             "-i", str(concat), "-c", "copy", str(body)])
-    if r.returncode != 0 or not body.exists():
-        print(r.stderr[-800:]); yd_put_text("error: body", f"{JOB_YD}/status.txt"); sys.exit("body fail")
+    if not xfade_chain(seg_files, durs, trans, tdurs, body):
+        yd_put_text("error: body", f"{JOB_YD}/status.txt"); sys.exit("body fail")
+    duration = round(probe_dur(body), 3)
+    print(f"  body duration={duration}s")
 
     # текст-слои (рукописный Caveat). enable по тайм-карте.
     fs_word  = int(W * 0.13)
@@ -175,14 +284,14 @@ def main():
         draw.append(
             f"drawtext=fontfile={FONT}:textfile={hook_file}:fontcolor=white:fontsize={fs_hook}:"
             f"line_spacing=10:box=1:boxcolor=black@0.35:boxborderw=26:"
-            f"x=(w-text_w)/2:y=h*0.60:enable='between(t,20.0,24.2)':"
-            f"alpha='if(lt(t,20.0),0,if(lt(t,20.8),(t-20.0)/0.8,1))'")
+            f"x=(w-text_w)/2:y=h*0.60:enable='between(t,19.6,23.3)':"
+            f"alpha='if(lt(t,19.6),0,if(lt(t,20.2),(t-19.6)/0.6,1))'")
     if outro:
         # тёмный текст на тёплом светлом детском рисунке
         draw.append(
             f"drawtext=fontfile={FONT}:textfile={outro_file}:fontcolor=0x3a2a18:fontsize={fs_outro}:"
-            f"line_spacing=8:x=(w-text_w)/2:y=h*0.78:enable='between(t,24.2,{duration})':"
-            f"alpha='if(lt(t,24.4),(t-24.2)/0.2,1)'")
+            f"line_spacing=8:x=(w-text_w)/2:y=h*0.78:enable='between(t,23.6,{duration})':"
+            f"alpha='if(lt(t,23.9),(t-23.6)/0.3,1)'")
     draw_chain = ("," + ",".join(draw)) if draw else ""
 
     # плотность: контраст/деసатурация → scratch + grit (screen) → зерно + виньетка → текст → аудио
