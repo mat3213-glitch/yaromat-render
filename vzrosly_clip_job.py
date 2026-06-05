@@ -126,22 +126,28 @@ def main():
         make_cover(WORK / src, p, W, H, zoom, flip)
         cover_path[key] = p
 
-    # timeline → concat demuxer
+    # timeline → каждый сегмент в короткий mp4, затем concat encoded (кросс-версийно надёжно)
     seq, total = build_timeline()
     duration = round(total, 3)
     print(f"  segments={len(seq)} duration={duration}s")
+    segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
+    seg_files = []
+    for i, (key, dur) in enumerate(seq):
+        sp = segdir / f"seg_{i:03d}.mp4"
+        r = run(["ffmpeg", "-y", "-loglevel", "error",
+                 "-loop", "1", "-t", f"{dur:.4f}", "-i", str(cover_path[key]),
+                 "-r", str(FPS), "-vf", "format=yuv420p",
+                 "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+                 "-video_track_timescale", "12800", str(sp)])
+        if r.returncode != 0 or not sp.exists():
+            print(r.stderr[-500:]); yd_put_text(f"error: seg {i}", f"{JOB_YD}/status.txt"); sys.exit("seg fail")
+        seg_files.append(sp)
     concat = WORK / "concat.txt"
-    lines = ["ffconcat version 1.0"]
-    for key, dur in seq:
-        lines.append(f"file '{cover_path[key]}'")
-        lines.append(f"duration {dur:.4f}")
-    lines.append(f"file '{cover_path[seq[-1][0]]}'")   # demuxer quirk: repeat last
-    concat.write_text("\n".join(lines))
+    concat.write_text("\n".join(f"file '{p}'" for p in seg_files))
 
     body = WORK / "body.mp4"
     r = run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0",
-             "-i", str(concat), "-vsync", "vfr", "-r", str(FPS),
-             "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "20", str(body)])
+             "-i", str(concat), "-c", "copy", str(body)])
     if r.returncode != 0 or not body.exists():
         print(r.stderr[-800:]); yd_put_text("error: body", f"{JOB_YD}/status.txt"); sys.exit("body fail")
 
