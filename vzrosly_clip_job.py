@@ -69,36 +69,32 @@ def make_cover(src: Path, dst: Path, W: int, H: int, zoom: float = 1.0, flip: bo
 
 def motion_seg(cover: Path, dur: float, mode: str, theta: float, blend: str,
                out: Path, W: int, H: int) -> bool:
-    """Сегмент-видео: 2 копии арта дрейфуют в противоположные стороны + blend
-    (двойная экспозиция → виден бленд + движение). mode: pan|zoom|single."""
+    """Сегмент-видео: 2 копии арта дрейфуют + blend (двойная экспозиция → виден бленд
+    + движение). mode: pan (встречный дрейф) | inward (схождение к центру) | single.
+    Амплитуда и скорость движения снижены (фидбэк yaromat: -50% и то и то)."""
     enc = ["-r", str(FPS), "-c:v", "libx264", "-crf", "22", "-preset", "veryfast",
            "-video_track_timescale", "12800", str(out)]
-    BW, BH = int(W * 1.30), int(H * 1.30)
+    SPEED = 0.5                       # плотность/скорость движения ×0.5
+    BW, BH = int(W * 1.15), int(H * 1.15)   # амплитуда (margin) ×0.5 (было 1.30)
     pre = f"scale={BW}:{BH}:force_original_aspect_ratio=increase,crop={BW}:{BH}"
-    mx, my = BW - W, BH - H          # margins
+    mx, my = BW - W, BH - H
     cx, cy = mx / 2, my / 2
-    ax, ay = mx / 2 * math.cos(theta), my / 2 * math.sin(theta)
-    # нормированное время 0..1: s = (t/dur). дрейф через центр: (s*2-1)
-    def panx(sign): return f"{cx:.1f}+({sign}({ax:.2f}))*((t/{dur:.4f})*2-1)"
-    def pany(sign): return f"{cy:.1f}+({sign}({ay:.2f}))*((t/{dur:.4f})*2-1)"
+    ax, ay = mx / 2 * math.cos(theta) * SPEED, my / 2 * math.sin(theta) * SPEED
+    # фаза: pan — дрейф через центр (-1..1); inward — схождение к центру (1..0)
+    ph_pan = f"((t/{dur:.4f})*2-1)"
+    ph_in  = f"(1-(t/{dur:.4f}))"
+    def drift(c, a, sign, ph): return f"{c:.1f}+({sign}({a:.2f}))*{ph}"
 
     if mode == "single":   # один слой, нежный дрейф (для outro/рисунка)
-        fc = (f"[0]{pre},crop={W}:{H}:x='{panx('+')}':y='{pany('+')}',"
+        fc = (f"[0]{pre},crop={W}:{H}:"
+              f"x='{drift(cx, ax, '+', ph_pan)}':y='{drift(cy, ay, '+', ph_pan)}',"
               f"format=yuv420p[v]")
-    elif mode == "zoom":   # слой A — наезд, слой B — отъезд, blend
-        zin  = f"'{W}*(1-0.16*(t/{dur:.4f}))'"
-        zinh = f"'{H}*(1-0.16*(t/{dur:.4f}))'"
-        zout = f"'{W}*(0.84+0.16*(t/{dur:.4f}))'"
-        zouth= f"'{H}*(0.84+0.16*(t/{dur:.4f}))'"
+    else:
+        ph = ph_in if mode == "inward" else ph_pan
+        # format=gbrp на входах blend → бленд в RGB (иначе screen/lighten сдвигают цвет в фиолет)
         fc = (f"[0]{pre},split[a][b];"
-              f"[a]crop=w={zin}:h={zinh}:x='(iw-ow)/2':y='(ih-oh)/2',scale={W}:{H},setsar=1[ca];"
-              f"[b]crop=w={zout}:h={zouth}:x='(iw-ow)/2':y='(ih-oh)/2',scale={W}:{H},setsar=1[cb];"
-              f"[ca][cb]blend=all_mode={blend}:all_opacity=0.5,format=yuv420p[v]")
-    else:                  # pan — слои дрейфуют в противоположные стороны
-        # format=gbrp на входах blend → бленд в RGB (иначе screen/lighten сдвигают YUV-цветность в фиолет)
-        fc = (f"[0]{pre},split[a][b];"
-              f"[a]crop={W}:{H}:x='{panx('+')}':y='{pany('+')}',setsar=1,format=gbrp[ca];"
-              f"[b]crop={W}:{H}:x='{panx('-')}':y='{pany('-')}',setsar=1,format=gbrp[cb];"
+              f"[a]crop={W}:{H}:x='{drift(cx, ax, '+', ph)}':y='{drift(cy, ay, '+', ph)}',setsar=1,format=gbrp[ca];"
+              f"[b]crop={W}:{H}:x='{drift(cx, ax, '-', ph)}':y='{drift(cy, ay, '-', ph)}',setsar=1,format=gbrp[cb];"
               f"[ca][cb]blend=all_mode={blend}:all_opacity=0.5,format=yuv420p[v]")
     r = run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-t", f"{dur:.4f}",
              "-i", str(cover), "-filter_complex", fc, "-map", "[v]"] + enc)
@@ -179,7 +175,8 @@ def build_timeline():
         elif region == "outro":
             mode, blend = "single", "none"
         else:
-            mode = "pan"   # направление дрейфа задаёт theta (8 вариантов) → разнообразие движения
+            # рандомно встречный дрейф или схождение «внутрь» (фидбэк yaromat)
+            mode = random.choice(["pan", "inward", "inward"])
             blend = random.choice(["average", "average", "screen", "lighten"])
         theta = random.choice(DIRS)
         # переход ВХОД в сегмент i (граница i-1 → i)
