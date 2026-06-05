@@ -195,7 +195,7 @@ def main():
         f"[2:v]scale={W}:{H},fps={FPS},format=gray,format=gbrp,setpts=PTS-STARTPTS[grt];"
         f"[v][scr]blend=all_mode=screen:all_opacity=0.6[b1];"
         f"[b1][grt]blend=all_mode=screen:all_opacity=0.5[b2];"
-        f"[b2]format=yuv420p,noise=alls=16:allf=t+u,"
+        f"[b2]format=yuv420p,noise=alls=12:allf=t+u,"
         f"vignette=angle=PI/4.5,"
         f"trim=duration={duration},setpts=PTS-STARTPTS{draw_chain}[vout]"
     )
@@ -208,7 +208,8 @@ def main():
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "3:a",
         "-af", f"afade=t=in:st=0:d=0.6,afade=t=out:st={afade_out}:d=1.5",
-        "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-r", str(FPS),
+        "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", str(FPS),
+        "-maxrate", "9M", "-bufsize", "18M",
         "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
         str(result),
     ]
