@@ -95,9 +95,10 @@ def motion_seg(cover: Path, dur: float, mode: str, theta: float, blend: str,
               f"[b]crop=w={zout}:h={zouth}:x='(iw-ow)/2':y='(ih-oh)/2',scale={W}:{H},setsar=1[cb];"
               f"[ca][cb]blend=all_mode={blend}:all_opacity=0.5,format=yuv420p[v]")
     else:                  # pan — слои дрейфуют в противоположные стороны
+        # format=gbrp на входах blend → бленд в RGB (иначе screen/lighten сдвигают YUV-цветность в фиолет)
         fc = (f"[0]{pre},split[a][b];"
-              f"[a]crop={W}:{H}:x='{panx('+')}':y='{pany('+')}',setsar=1[ca];"
-              f"[b]crop={W}:{H}:x='{panx('-')}':y='{pany('-')}',setsar=1[cb];"
+              f"[a]crop={W}:{H}:x='{panx('+')}':y='{pany('+')}',setsar=1,format=gbrp[ca];"
+              f"[b]crop={W}:{H}:x='{panx('-')}':y='{pany('-')}',setsar=1,format=gbrp[cb];"
               f"[ca][cb]blend=all_mode={blend}:all_opacity=0.5,format=yuv420p[v]")
     r = run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-t", f"{dur:.4f}",
              "-i", str(cover), "-filter_complex", fc, "-map", "[v]"] + enc)
