@@ -30,6 +30,7 @@ WORK    = Path("/tmp/vzrosly_job"); WORK.mkdir(parents=True, exist_ok=True)
 REPO    = Path(__file__).resolve().parent
 FONT    = str(REPO / "assets" / "Caveat.ttf")
 SCRATCH = str(REPO / "assets" / "scratch_overlay.mp4")
+GRIT    = str(REPO / "assets" / "grit_overlay.mp4")
 
 FMT = {"square": (1080, 1080), "vertical": (1080, 1920)}
 FPS = 25
@@ -73,11 +74,12 @@ def build_timeline():
     # 0:00–0:04 held intro — anchor
     seq.append(("anchor", 6 * b))                 # 4.14
     # groove — cut/1 доля, чередование cold+anchor-вспышки
-    groove = ["c1", "anchor", "c2", "c3", "anchor", "c4",
-              "c1f", "anchor", "c2f", "c3", "anchor", "c4f"]   # 12 × 1b = 8.28
+    groove = ["c1", "anchor", "clock", "c2", "anchor", "crowd",
+              "c3", "anchor", "c4", "a1", "anchor", "a2"]       # 12 × 1b = 8.28
     seq += [(k, b) for k in groove]
-    # strobe — cut/½ доли, плотная очередь (20 × 0.5b = 6.90)
-    strobe_pool = ["c1", "c2", "c3", "c4", "anchor", "c1f", "c2f", "c4f"]
+    # strobe — cut/½ доли, плотная очередь (20 × 0.5b = 6.90), богатый пул разнофактурных кадров
+    strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
+                   "a1", "c4", "crowd", "c1f", "a2f", "c2f", "clock", "c4f"]
     for i in range(20):
         seq.append((strobe_pool[i % len(strobe_pool)], 0.5 * b))
     # 0:20–0:24 held breath — anchor punch (ближе)
@@ -104,7 +106,8 @@ def main():
 
     # downloads
     for name in ["track.mp3", "anchor.png", "cold_01.png", "cold_02.png",
-                 "cold_03.png", "cold_04.png", "child.png"]:
+                 "cold_03.png", "cold_04.png", "child.png",
+                 "crowd.png", "clock.png", "art1.png", "art2.png", "art4.png"]:
         if not yd_get(f"{JOB_YD}/{name}", WORK / name):
             sys.exit(f"missing {name}")
     print(f"  format={fmt} {W}x{H} audio_start={audio_start}")
@@ -119,6 +122,11 @@ def main():
         "c2":  ("cold_02.png", 1.0, False), "c2f": ("cold_02.png", 1.06, True),
         "c3":  ("cold_03.png", 1.0, False),
         "c4":  ("cold_04.png", 1.0, False), "c4f": ("cold_04.png", 1.06, True),
+        "crowd": ("crowd.png", 1.0, False),
+        "clock": ("clock.png", 1.0, False),
+        "a1": ("art1.png", 1.0, False),
+        "a2": ("art2.png", 1.0, False), "a2f": ("art2.png", 1.06, True),
+        "a4": ("art4.png", 1.0, False),
     }
     cover_path = {}
     for key, (src, zoom, flip) in base.items():
@@ -177,22 +185,28 @@ def main():
             f"alpha='if(lt(t,24.4),(t-24.2)/0.2,1)'")
     draw_chain = ("," + ",".join(draw)) if draw else ""
 
-    # scratch screen-blend + текст + аудио
+    # плотность: контраст/деసатурация → scratch + grit (screen) → зерно + виньетка → текст → аудио
     result = WORK / out_name
     afade_out = max(0.0, duration - 1.5)
     fc = (
-        f"[0:v]fps={FPS},format=gbrp,setpts=PTS-STARTPTS[v];"
-        f"[1:v]scale={W}:{H},fps={FPS},format=gray,format=gbrp,setpts=PTS-STARTPTS[s];"
-        f"[v][s]blend=all_mode=screen:all_opacity=0.55[bl];"
-        f"[bl]format=yuv420p,trim=duration={duration},setpts=PTS-STARTPTS{draw_chain}[vout]"
+        f"[0:v]fps={FPS},eq=contrast=1.14:saturation=0.9:brightness=-0.02:gamma=0.96,"
+        f"format=gbrp,setpts=PTS-STARTPTS[v];"
+        f"[1:v]scale={W}:{H},fps={FPS},format=gray,format=gbrp,setpts=PTS-STARTPTS[scr];"
+        f"[2:v]scale={W}:{H},fps={FPS},format=gray,format=gbrp,setpts=PTS-STARTPTS[grt];"
+        f"[v][scr]blend=all_mode=screen:all_opacity=0.6[b1];"
+        f"[b1][grt]blend=all_mode=screen:all_opacity=0.5[b2];"
+        f"[b2]format=yuv420p,noise=alls=16:allf=t+u,"
+        f"vignette=angle=PI/4.5,"
+        f"trim=duration={duration},setpts=PTS-STARTPTS{draw_chain}[vout]"
     )
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", str(body),
         "-stream_loop", "-1", "-i", SCRATCH,
+        "-stream_loop", "-1", "-i", GRIT,
         "-ss", str(audio_start), "-t", str(duration), "-i", str(WORK / "track.mp3"),
         "-filter_complex", fc,
-        "-map", "[vout]", "-map", "2:a",
+        "-map", "[vout]", "-map", "3:a",
         "-af", f"afade=t=in:st=0:d=0.6,afade=t=out:st={afade_out}:d=1.5",
         "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-r", str(FPS),
         "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
