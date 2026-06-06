@@ -103,6 +103,22 @@ def motion_seg(cover: Path, dur: float, mode: str, theta: float, blend: str,
     return r.returncode == 0 and out.exists()
 
 
+def make_video_seg(src: Path, dur: float, out: Path, W: int, H: int,
+                   crf: str = "22", preset: str = "veryfast") -> bool:
+    """Сегмент из видео-футажа (Pexels): slice длины dur, cover-crop в WxH, fps.
+    Короткий футаж зацикливается (-stream_loop). Грейд под стиль — общим density-пассом тела.
+    Энкод как у motion_seg (timescale 12800) → совместимо с xfade_chain."""
+    vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+          f"fps={FPS},setsar=1,format=yuv420p")
+    r = run(["ffmpeg", "-y", "-loglevel", "error", "-stream_loop", "-1",
+             "-t", f"{dur:.4f}", "-i", str(src), "-vf", vf, "-an",
+             "-r", str(FPS), "-c:v", "libx264", "-crf", crf, "-preset", preset,
+             "-video_track_timescale", "12800", str(out)])
+    if r.returncode != 0:
+        print("make_video_seg:", r.stderr[-300:])
+    return r.returncode == 0 and out.exists()
+
+
 def probe_dur(p: Path) -> float:
     r = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "csv=p=0", str(p)])
@@ -264,6 +280,7 @@ def main():
     outro = job.get("outro", "")
     track_credit = job.get("track_credit", "")   # старт: «Артист — Трек» (режим reference)
     watermark    = job.get("watermark", "")       # весь клип: кредит yaromat (привязка охватов)
+    video_keys   = job.get("video_keys", [])      # ключи-сегменты из видео-футажа (Pexels) вместо стиллов
 
     # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
     if preview:
@@ -275,6 +292,10 @@ def main():
     for name in ["track.mp3"] + SRC_ASSETS:
         if not yd_get(f"{JOB_YD}/{name}", WORK / name):
             sys.exit(f"missing {name}")
+    # видео-футаж для video_keys (Pexels-вставки)
+    for k in video_keys:
+        if not yd_get(f"{JOB_YD}/{k}.mp4", WORK / f"{k}.mp4"):
+            print(f"  WARN: нет видео {k}.mp4 — упаду на стилл")
     print(f"  format={fmt} {W}x{H} audio_start={audio_start} preview={preview}")
 
     # covers
@@ -296,8 +317,13 @@ def main():
         sp = segdir / f"seg_{i:03d}.mp4"
         # длиннее на величину входящего перехода — xfade «съест» этот overlap, нетто=план
         enc_dur = s["dur"] + s["tdur"]
-        if not motion_seg(cover_path[s["key"]], enc_dur, s["mode"], s["theta"],
-                          s["blend"], sp, W, H, crf=seg_crf, preset=seg_preset):
+        vid = WORK / f"{s['key']}.mp4"
+        if s["key"] in video_keys and vid.exists():
+            ok = make_video_seg(vid, enc_dur, sp, W, H, crf=seg_crf, preset=seg_preset)
+        else:
+            ok = motion_seg(cover_path[s["key"]], enc_dur, s["mode"], s["theta"],
+                            s["blend"], sp, W, H, crf=seg_crf, preset=seg_preset)
+        if not ok:
             yd_put_text(f"error: seg {i}", f"{JOB_YD}/status.txt"); sys.exit("seg fail")
         seg_files.append(sp)
         durs.append(probe_dur(sp))
