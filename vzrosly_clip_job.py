@@ -152,11 +152,12 @@ STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
              "fadeblack", "slideup", "fade", "fadewhite"]
 
 
-def build_timeline(variant="full"):
+def build_timeline(variant="full", bpm=87.0):
     """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur,region).
-    variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата."""
+    variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата.
+    bpm: темп трека — задаёт долю (held↔строб ритм матчит бит). Дефолт 87 (трек «взрослый»)."""
     random.seed(42)  # детерминизм: square и vertical монтируются одинаково
-    b = BEAT
+    b = 60.0 / bpm
     raw = []
     if variant == "short":
         raw.append(("anchor", 3 * b, "intro"))             # 0: held intro
@@ -242,6 +243,7 @@ def main():
     out_name = job["out_name"]
     audio_start = float(job.get("audio_start", 8))
     variant = job.get("variant", "full")
+    bpm = float(job.get("bpm", 87.0))
     preview = bool(job.get("preview", False))
     word  = job.get("word", "")
     hook  = job.get("hook", "")
@@ -268,8 +270,8 @@ def main():
         cover_path[key] = p
 
     # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
-    seq, total = build_timeline(variant)
-    print(f"  variant={variant}")
+    seq, total = build_timeline(variant, bpm)
+    print(f"  variant={variant} bpm={bpm}")
     nominal = round(total, 3)
     print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
