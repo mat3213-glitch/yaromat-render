@@ -151,21 +151,33 @@ STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
              "fadeblack", "slideup", "fade", "fadewhite"]
 
 
-def build_timeline():
-    """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur). Сумма dur = 28."""
+def build_timeline(variant="full"):
+    """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur,region).
+    variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата."""
     random.seed(42)  # детерминизм: square и vertical монтируются одинаково
     b = BEAT
     raw = []
-    raw.append(("anchor", 6 * b, "intro"))                 # 0: held intro
-    groove = ["c1", "anchor", "clock", "c2", "anchor", "crowd",
-              "c3", "anchor", "c4", "a1", "anchor", "a2"]
-    raw += [(k, b, "groove") for k in groove]              # 1..12
-    strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
-                   "a1", "c4", "crowd", "c1f", "a2f", "c2f", "clock", "c4f"]
-    for i in range(20):
-        raw.append((strobe_pool[i % len(strobe_pool)], 0.5 * b, "strobe"))  # 13..32
-    raw.append(("anchorp", 6 * b, "breath"))               # 33: held breath
-    raw.append(("child", 4.54, "outro"))                   # 34: warm outro
+    if variant == "short":
+        raw.append(("anchor", 3 * b, "intro"))             # 0: held intro
+        groove = ["c1", "anchor", "clock", "c2", "anchor", "crowd"]
+        raw += [(k, b, "groove") for k in groove]          # 1..6
+        strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
+                       "a1", "c4"]
+        for i in range(10):
+            raw.append((strobe_pool[i % len(strobe_pool)], 0.5 * b, "strobe"))  # 7..16
+        raw.append(("anchorp", 3 * b, "breath"))           # 17: held breath
+        raw.append(("child", 2.3, "outro"))                # 18: warm outro
+    else:
+        raw.append(("anchor", 6 * b, "intro"))             # 0: held intro
+        groove = ["c1", "anchor", "clock", "c2", "anchor", "crowd",
+                  "c3", "anchor", "c4", "a1", "anchor", "a2"]
+        raw += [(k, b, "groove") for k in groove]          # 1..12
+        strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
+                       "a1", "c4", "crowd", "c1f", "a2f", "c2f", "clock", "c4f"]
+        for i in range(20):
+            raw.append((strobe_pool[i % len(strobe_pool)], 0.5 * b, "strobe"))  # 13..32
+        raw.append(("anchorp", 6 * b, "breath"))           # 33: held breath
+        raw.append(("child", 4.54, "outro"))               # 34: warm outro
 
     seq = []
     for i, (key, dur, region) in enumerate(raw):
@@ -193,7 +205,7 @@ def build_timeline():
         else:
             tin, tdur = "fade", 0.05
         seq.append(dict(key=key, dur=dur, mode=mode, theta=theta,
-                        blend=blend, tin=tin, tdur=tdur))
+                        blend=blend, tin=tin, tdur=tdur, region=region))
     total = sum(s["dur"] for s in seq)
     return seq, total
 
@@ -208,6 +220,7 @@ def main():
     W, H = FMT.get(fmt, FMT["square"])
     out_name = job["out_name"]
     audio_start = float(job.get("audio_start", 8))
+    variant = job.get("variant", "full")
     word  = job.get("word", "")
     hook  = job.get("hook", "")
     outro = job.get("outro", "")
@@ -243,7 +256,8 @@ def main():
         cover_path[key] = p
 
     # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
-    seq, total = build_timeline()
+    seq, total = build_timeline(variant)
+    print(f"  variant={variant}")
     nominal = round(total, 3)
     print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
@@ -266,6 +280,21 @@ def main():
     duration = round(probe_dur(body), 3)
     print(f"  body duration={duration}s")
 
+    # onset каждого сегмента в финальном xfade-таймлайне (та же математика, что в xfade_chain)
+    onsets, running = [0.0], durs[0]
+    for i in range(1, len(seq)):
+        onsets.append(max(0.0, running - tdurs[i]))
+        running = running + durs[i] - tdurs[i]
+    i_groove = next((i for i, s in enumerate(seq) if s["region"] == "groove"), 1)
+    i_breath = next((i for i, s in enumerate(seq) if s["region"] == "breath"), len(seq) - 2)
+    i_outro  = next((i for i, s in enumerate(seq) if s["region"] == "outro"),  len(seq) - 1)
+    # тайм-карта текста из реального таймлайна (работает для full и short)
+    w0, w1 = 0.4, 1.2
+    w2 = max(w1 + 0.4, onsets[i_groove] - 0.2); w3 = w2 + 0.4   # слово-хук на held-интро
+    hk0 = onsets[i_breath] + 0.4; hk1 = onsets[i_breath] + seq[i_breath]["dur"]  # хук на выдохе
+    ot0 = onsets[i_outro] + 0.3                                 # аутро-подпись на тёплом кадре
+    print(f"  text: word[{w0:.1f}-{w3:.1f}] hook[{hk0:.1f}-{hk1:.1f}] outro[{ot0:.1f}-{duration}]")
+
     # текст-слои (рукописный Caveat). enable по тайм-карте.
     fs_word  = int(W * 0.13)
     fs_hook  = int(W * 0.058)
@@ -277,19 +306,20 @@ def main():
     if word:
         draw.append(
             f"drawtext=fontfile={FONT}:text='{word}':fontcolor=white:fontsize={fs_word}:"
-            f"x=(w-text_w)/2:y=h*0.42:alpha='if(lt(t,0.4),0,if(lt(t,1.2),(t-0.4)/0.8,if(lt(t,3.6),1,if(lt(t,4.0),(4.0-t)/0.4,0))))'")
+            f"x=(w-text_w)/2:y=h*0.42:"
+            f"alpha='if(lt(t,{w0}),0,if(lt(t,{w1}),(t-{w0})/{w1-w0:.3f},if(lt(t,{w2:.3f}),1,if(lt(t,{w3:.3f}),({w3:.3f}-t)/{w3-w2:.3f},0))))'")
     if hook:
         draw.append(
             f"drawtext=fontfile={FONT}:textfile={hook_file}:fontcolor=white:fontsize={fs_hook}:"
             f"line_spacing=10:box=1:boxcolor=black@0.35:boxborderw=26:"
-            f"x=(w-text_w)/2:y=h*0.60:enable='between(t,19.6,23.3)':"
-            f"alpha='if(lt(t,19.6),0,if(lt(t,20.2),(t-19.6)/0.6,1))'")
+            f"x=(w-text_w)/2:y=h*0.60:enable='between(t,{hk0:.3f},{hk1:.3f})':"
+            f"alpha='if(lt(t,{hk0:.3f}),0,if(lt(t,{hk0+0.6:.3f}),(t-{hk0:.3f})/0.6,1))'")
     if outro:
         # тёмный текст на тёплом светлом детском рисунке
         draw.append(
             f"drawtext=fontfile={FONT}:textfile={outro_file}:fontcolor=0x3a2a18:fontsize={fs_outro}:"
-            f"line_spacing=8:x=(w-text_w)/2:y=h*0.78:enable='between(t,23.6,{duration})':"
-            f"alpha='if(lt(t,23.9),(t-23.6)/0.3,1)'")
+            f"line_spacing=8:x=(w-text_w)/2:y=h*0.78:enable='between(t,{ot0:.3f},{duration})':"
+            f"alpha='if(lt(t,{ot0+0.3:.3f}),(t-{ot0:.3f})/0.3,1)'")
     draw_chain = ("," + ",".join(draw)) if draw else ""
 
     # плотность: контраст/деసатурация → scratch + grit (screen) → зерно + виньетка → текст → аудио
