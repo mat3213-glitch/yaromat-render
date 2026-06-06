@@ -68,11 +68,11 @@ def make_cover(src: Path, dst: Path, W: int, H: int, zoom: float = 1.0, flip: bo
 
 
 def motion_seg(cover: Path, dur: float, mode: str, theta: float, blend: str,
-               out: Path, W: int, H: int) -> bool:
+               out: Path, W: int, H: int, crf: str = "22", preset: str = "veryfast") -> bool:
     """Сегмент-видео: 2 копии арта дрейфуют + blend (двойная экспозиция → виден бленд
     + движение). mode: pan (встречный дрейф) | inward (схождение к центру) | single.
     Амплитуда и скорость движения снижены (фидбэк yaromat: -50% и то и то)."""
-    enc = ["-r", str(FPS), "-c:v", "libx264", "-crf", "22", "-preset", "veryfast",
+    enc = ["-r", str(FPS), "-c:v", "libx264", "-crf", crf, "-preset", preset,
            "-video_track_timescale", "12800", str(out)]
     SPEED = 0.5                       # плотность/скорость движения ×0.5
     BW, BH = int(W * 1.15), int(H * 1.15)   # амплитуда (margin) ×0.5 (было 1.30)
@@ -112,7 +112,8 @@ def probe_dur(p: Path) -> float:
         return 0.0
 
 
-def xfade_chain(segs, durs, trans, tdurs, out: Path) -> bool:
+def xfade_chain(segs, durs, trans, tdurs, out: Path,
+                crf: str = "20", preset: str = "veryfast") -> bool:
     """Склейка сегментов через xfade с разными переходами. Возвращает успех.
     segs[i] — путь, durs[i] — реальная длительность, trans[i]/tdurs[i] — переход
     ВХОДА в сегмент i (i>=1)."""
@@ -133,7 +134,7 @@ def xfade_chain(segs, durs, trans, tdurs, out: Path) -> bool:
     fc = ";".join(parts)
     r = run(["ffmpeg", "-y", "-loglevel", "error"] + inputs +
             ["-filter_complex", fc, "-map", f"[{prev}]",
-             "-r", str(FPS), "-c:v", "libx264", "-crf", "20", "-preset", "veryfast",
+             "-r", str(FPS), "-c:v", "libx264", "-crf", crf, "-preset", preset,
              "-pix_fmt", "yuv420p", str(out)])
     if r.returncode != 0:
         print("xfade_chain:", r.stderr[-600:])
@@ -210,6 +211,26 @@ def build_timeline(variant="full"):
     return seq, total
 
 
+# источники-ассеты (имена файлов) и спецификация cover-кадров: ключ → (src, zoom, flip).
+# Общий источник правды для рендера и для локального сториборда (preview tier 1).
+SRC_ASSETS = ["anchor.png", "cold_01.png", "cold_02.png", "cold_03.png", "cold_04.png",
+              "child.png", "crowd.png", "clock.png", "art1.png", "art2.png", "art4.png"]
+COVER_SPEC = {
+    "anchor":  ("anchor.png", 1.0,  False),
+    "anchorp": ("anchor.png", 1.28, False),   # punch-in для выдоха
+    "child":   ("child.png",  1.0,  False),
+    "c1":  ("cold_01.png", 1.0, False), "c1f": ("cold_01.png", 1.06, True),
+    "c2":  ("cold_02.png", 1.0, False), "c2f": ("cold_02.png", 1.06, True),
+    "c3":  ("cold_03.png", 1.0, False),
+    "c4":  ("cold_04.png", 1.0, False), "c4f": ("cold_04.png", 1.06, True),
+    "crowd": ("crowd.png", 1.0, False),
+    "clock": ("clock.png", 1.0, False),
+    "a1": ("art1.png", 1.0, False),
+    "a2": ("art2.png", 1.0, False), "a2f": ("art2.png", 1.06, True),
+    "a4": ("art4.png", 1.0, False),
+}
+
+
 def main():
     print(f"Job: {JOB_ID}")
     jf = WORK / "job.json"
@@ -221,36 +242,27 @@ def main():
     out_name = job["out_name"]
     audio_start = float(job.get("audio_start", 8))
     variant = job.get("variant", "full")
+    preview = bool(job.get("preview", False))
     word  = job.get("word", "")
     hook  = job.get("hook", "")
     outro = job.get("outro", "")
 
+    # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
+    if preview:
+        W, H = (W // 2) // 2 * 2, (H // 2) // 2 * 2   # half, чётное
+    seg_crf, seg_preset = ("30", "ultrafast") if preview else ("22", "veryfast")
+    body_crf, body_preset = ("30", "ultrafast") if preview else ("20", "veryfast")
+
     # downloads
-    for name in ["track.mp3", "anchor.png", "cold_01.png", "cold_02.png",
-                 "cold_03.png", "cold_04.png", "child.png",
-                 "crowd.png", "clock.png", "art1.png", "art2.png", "art4.png"]:
+    for name in ["track.mp3"] + SRC_ASSETS:
         if not yd_get(f"{JOB_YD}/{name}", WORK / name):
             sys.exit(f"missing {name}")
-    print(f"  format={fmt} {W}x{H} audio_start={audio_start}")
+    print(f"  format={fmt} {W}x{H} audio_start={audio_start} preview={preview}")
 
     # covers
     cov = WORK / "cov"; cov.mkdir(exist_ok=True)
-    base = {
-        "anchor":  ("anchor.png", 1.0,  False),
-        "anchorp": ("anchor.png", 1.28, False),   # punch-in для выдоха
-        "child":   ("child.png",  1.0,  False),
-        "c1":  ("cold_01.png", 1.0, False), "c1f": ("cold_01.png", 1.06, True),
-        "c2":  ("cold_02.png", 1.0, False), "c2f": ("cold_02.png", 1.06, True),
-        "c3":  ("cold_03.png", 1.0, False),
-        "c4":  ("cold_04.png", 1.0, False), "c4f": ("cold_04.png", 1.06, True),
-        "crowd": ("crowd.png", 1.0, False),
-        "clock": ("clock.png", 1.0, False),
-        "a1": ("art1.png", 1.0, False),
-        "a2": ("art2.png", 1.0, False), "a2f": ("art2.png", 1.06, True),
-        "a4": ("art4.png", 1.0, False),
-    }
     cover_path = {}
-    for key, (src, zoom, flip) in base.items():
+    for key, (src, zoom, flip) in COVER_SPEC.items():
         p = cov / f"{key}.png"
         make_cover(WORK / src, p, W, H, zoom, flip)
         cover_path[key] = p
@@ -267,7 +279,7 @@ def main():
         # длиннее на величину входящего перехода — xfade «съест» этот overlap, нетто=план
         enc_dur = s["dur"] + s["tdur"]
         if not motion_seg(cover_path[s["key"]], enc_dur, s["mode"], s["theta"],
-                          s["blend"], sp, W, H):
+                          s["blend"], sp, W, H, crf=seg_crf, preset=seg_preset):
             yd_put_text(f"error: seg {i}", f"{JOB_YD}/status.txt"); sys.exit("seg fail")
         seg_files.append(sp)
         durs.append(probe_dur(sp))
@@ -275,7 +287,7 @@ def main():
         tdurs.append(s["tdur"])
 
     body = WORK / "body.mp4"
-    if not xfade_chain(seg_files, durs, trans, tdurs, body):
+    if not xfade_chain(seg_files, durs, trans, tdurs, body, crf=body_crf, preset=body_preset):
         yd_put_text("error: body", f"{JOB_YD}/status.txt"); sys.exit("body fail")
     duration = round(probe_dur(body), 3)
     print(f"  body duration={duration}s")
@@ -345,8 +357,10 @@ def main():
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "3:a",
         "-af", f"afade=t=in:st=0:d=0.6,afade=t=out:st={afade_out}:d=1.5",
-        "-c:v", "libx264", "-crf", "23", "-preset", "fast", "-r", str(FPS),
-        "-maxrate", "9M", "-bufsize", "18M",
+        "-c:v", "libx264",
+        *(["-crf", "30", "-preset", "ultrafast"] if preview
+          else ["-crf", "23", "-preset", "fast", "-maxrate", "9M", "-bufsize", "18M"]),
+        "-r", str(FPS),
         "-c:a", "aac", "-b:a", "192k", "-pix_fmt", "yuv420p", "-shortest",
         str(result),
     ]
