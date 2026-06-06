@@ -112,6 +112,20 @@ def probe_dur(p: Path) -> float:
         return 0.0
 
 
+def mean_luma(p: Path) -> float:
+    """Средняя яркость кадра 0..255 (ffmpeg signalstats YAVG). Для выбора контраста текста."""
+    import re
+    r = run(["ffmpeg", "-i", str(p), "-vf", "signalstats,metadata=print:file=-",
+             "-frames:v", "1", "-f", "null", "-"])
+    m = re.search(r"YAVG[:=]([0-9.]+)", r.stdout + r.stderr)
+    return float(m.group(1)) if m else 128.0
+
+
+def contrast_text(luma: float):
+    """По яркости фона → (fontcolor, bordercolor) для читаемости на любом кадре."""
+    return ("white", "black") if luma < 120 else ("0x222018", "white")
+
+
 def xfade_chain(segs, durs, trans, tdurs, out: Path,
                 crf: str = "20", preset: str = "veryfast") -> bool:
     """Склейка сегментов через xfade с разными переходами. Возвращает успех.
@@ -248,6 +262,8 @@ def main():
     word  = job.get("word", "")
     hook  = job.get("hook", "")
     outro = job.get("outro", "")
+    track_credit = job.get("track_credit", "")   # старт: «Артист — Трек» (режим reference)
+    watermark    = job.get("watermark", "")       # весь клип: кредит yaromat (привязка охватов)
 
     # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
     if preview:
@@ -313,15 +329,35 @@ def main():
     fs_word  = int(W * 0.13)
     fs_hook  = int(W * 0.058)
     fs_outro = int(W * 0.05)
+    fs_cred  = int(W * 0.046)   # старт-кредит «Артист — Трек»
+    fs_wm    = int(W * 0.030)   # вотермарк yaromat
     hook_file  = WORK / "hook.txt";  hook_file.write_text(hook,  encoding="utf-8")
     outro_file = WORK / "outro.txt"; outro_file.write_text(outro, encoding="utf-8")
+
+    # адаптивный контраст: яркость кадров под интро-текстом и под аутро
+    luma_intro = mean_luma(cover_path["anchor"])
+    luma_outro = mean_luma(cover_path.get("child", cover_path["anchor"]))
+    fc_intro, bc_intro = contrast_text(luma_intro)
+    fc_outro, bc_outro = contrast_text(luma_outro)
+    bw_word  = max(2, int(fs_word * 0.04))
+    bw_small = max(2, int(fs_outro * 0.07))
+    print(f"  luma intro={luma_intro:.0f}({fc_intro}) outro={luma_outro:.0f}({fc_outro})")
 
     draw = []
     if word:
         draw.append(
-            f"drawtext=fontfile={FONT}:text='{word}':fontcolor=white:fontsize={fs_word}:"
+            f"drawtext=fontfile={FONT}:text='{word}':fontcolor={fc_intro}:fontsize={fs_word}:"
+            f"borderw={bw_word}:bordercolor={bc_intro}@0.6:"
             f"x=(w-text_w)/2:y=h*0.42:"
             f"alpha='if(lt(t,{w0}),0,if(lt(t,{w1}),(t-{w0})/{w1-w0:.3f},if(lt(t,{w2:.3f}),1,if(lt(t,{w3:.3f}),({w3:.3f}-t)/{w3-w2:.3f},0))))'")
+    if track_credit:
+        # старт: «Артист — Трек» (reference-режим), адаптивный контраст, под словом
+        cred_file = WORK / "cred.txt"; cred_file.write_text(track_credit, encoding="utf-8")
+        draw.append(
+            f"drawtext=fontfile={FONT}:textfile={cred_file}:fontcolor={fc_intro}:fontsize={fs_cred}:"
+            f"borderw={bw_small}:bordercolor={bc_intro}@0.6:"
+            f"x=(w-text_w)/2:y=h*0.60:"
+            f"alpha='if(lt(t,{w0}),0,if(lt(t,{w1}),(t-{w0})/{w1-w0:.3f},if(lt(t,{w2+1.2:.3f}),1,if(lt(t,{w3+1.2:.3f}),({w3+1.2:.3f}-t)/{w3-w2:.3f},0))))'")
     if hook:
         draw.append(
             f"drawtext=fontfile={FONT}:textfile={hook_file}:fontcolor=white:fontsize={fs_hook}:"
@@ -329,11 +365,20 @@ def main():
             f"x=(w-text_w)/2:y=h*0.60:enable='between(t,{hk0:.3f},{hk1:.3f})':"
             f"alpha='if(lt(t,{hk0:.3f}),0,if(lt(t,{hk0+0.6:.3f}),(t-{hk0:.3f})/0.6,1))'")
     if outro:
-        # тёмный текст на тёплом светлом детском рисунке
+        # адаптивный контраст под кадр аутро (фикс: на тёмном фоне тёмный текст пропадал)
         draw.append(
-            f"drawtext=fontfile={FONT}:textfile={outro_file}:fontcolor=0x3a2a18:fontsize={fs_outro}:"
-            f"line_spacing=8:x=(w-text_w)/2:y=h*0.78:enable='between(t,{ot0:.3f},{duration})':"
+            f"drawtext=fontfile={FONT}:textfile={outro_file}:fontcolor={fc_outro}:fontsize={fs_outro}:"
+            f"borderw={bw_small}:bordercolor={bc_outro}@0.6:line_spacing=8:"
+            f"x=(w-text_w)/2:y=h*0.78:enable='between(t,{ot0:.3f},{duration})':"
             f"alpha='if(lt(t,{ot0+0.3:.3f}),(t-{ot0:.3f})/0.3,1)'")
+    if watermark:
+        # весь клип: кредит yaromat в нижнем углу (scroll-proof привязка охватов).
+        # читаемость на любом фоне — белый текст + тёмная обводка, лёгкая прозрачность.
+        wm_file = WORK / "wm.txt"; wm_file.write_text(watermark, encoding="utf-8")
+        draw.append(
+            f"drawtext=fontfile={FONT}:textfile={wm_file}:fontcolor=white@0.85:fontsize={fs_wm}:"
+            f"borderw={bw_small}:bordercolor=black@0.7:"
+            f"x=w-text_w-{int(W*0.04)}:y=h-text_h-{int(H*0.035)}")
     draw_chain = ("," + ",".join(draw)) if draw else ""
 
     # плотность: контраст/деసатурация → scratch + grit (screen) → зерно + виньетка → текст → аудио
