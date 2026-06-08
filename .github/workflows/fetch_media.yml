@@ -1,0 +1,33 @@
+name: Fetch Media (runner-side, US-IP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls_json:
+        description: 'JSON list [{"url","type":"pexels|pinterest|direct","name"}]'
+        required: true
+      dest_folder:
+        description: 'ЯД destination folder'
+        required: false
+        default: 'Content factory/runner_fetch/batch'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          pip install -q requests yt-dlp
+          sudo apt-get update -qq && sudo apt-get install -y --fix-missing ffmpeg
+      - name: Fetch and upload
+        env:
+          YADISK_LOGIN:    ${{ secrets.YADISK_LOGIN }}
+          YADISK_PASSWORD: ${{ secrets.YADISK_PASSWORD }}
+          URLS_JSON:       ${{ inputs.urls_json }}
+          DEST_FOLDER:     ${{ inputs.dest_folder }}
+        run: python fetch_runner.py
