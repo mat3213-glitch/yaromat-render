@@ -40,21 +40,26 @@ def paywall_visible(pg):
         except: pass
     return None
 
-def try_generate(pg, prompt):
+def cur_src(pg):
+    v=pg.query_selector("video"); s=v.get_attribute("src") if v else None
+    return s if (s and s.startswith("http")) else None
+
+def try_generate(pg, prompt, prev_src):
+    """Успех ТОЛЬКО если появился НОВЫЙ video src (≠ prev_src). Иначе paywall/timeout."""
     ta=pg.query_selector("textarea#fn__include_textarea") or pg.query_selector("textarea")
-    if not ta: return "no_input",""
+    if not ta: return "no_input","",prev_src
     try: ta.click(); ta.fill(""); ta.fill(prompt)
-    except Exception as e: return "fill_err",str(e)
+    except Exception as e: return "fill_err",str(e),prev_src
     btn=pg.query_selector("#generate_it")
-    if not btn: return "no_button",""
+    if not btn: return "no_button","",prev_src
     try: btn.click(timeout=8000)
-    except Exception as e: return "click_err",str(e)
+    except Exception as e: return "click_err",str(e),prev_src
     for _ in range(24):
         pg.wait_for_timeout(5000)
-        if paywall_visible(pg): return "paywall",""
-        v=pg.query_selector("video"); src=v.get_attribute("src") if v else None
-        if src and src.startswith("http"): return "ok",src[:90]
-    return "timeout",""
+        if paywall_visible(pg): return "paywall","",prev_src
+        s=cur_src(pg)
+        if s and s!=prev_src: return "ok",s[:90],s   # именно НОВЫЙ url
+    return "timeout",f"src без изменений ({(prev_src or '')[-30:]})",prev_src
 
 def dump_close_candidates(pg):
     # ищем потенциальные кнопки закрытия видимой модалки
@@ -104,8 +109,9 @@ with sync_playwright() as pw:
         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36")
     pg=ctx.new_page(); pg.goto(URL,wait_until="domcontentloaded",timeout=60000); pg.wait_for_timeout(5000)
 
-    st1,d1=try_generate(pg,"deep blue ocean light rays"); log(f"[gen1] {st1} {d1}")
-    st2,d2=try_generate(pg,"slow drifting clouds dark sky"); log(f"[gen2] {st2} {d2}")
+    last=None
+    st1,d1,last=try_generate(pg,"deep blue ocean light rays",last); log(f"[gen1] {st1} {d1}")
+    st2,d2,last=try_generate(pg,"slow drifting clouds dark sky",last); log(f"[gen2] {st2} {d2}")
 
     if st2=="paywall":
         log("\n-- close candidates --"); [log(f"  {c}") for c in dump_close_candidates(pg)]
@@ -113,14 +119,16 @@ with sync_playwright() as pw:
         closed=try_close(pg)
         log(f"\nзакрытие модалки: {'✅ '+closed if closed else '❌ не удалось'}")
         if closed:
-            st3,d3=try_generate(pg,"calm misty forest at dawn")
+            st3,d3,last=try_generate(pg,"calm misty forest at dawn",last)
             log(f"[gen3 после закрытия, тот же IP] {st3} {d3}")
             if st3=="ok":
-                log(">>> ВЫВОД: пейволл — СОФТ. Закрыл модалку и генеришь дальше на том же IP. Обход тривиален.")
+                log(">>> ВЫВОД: пейволл — СОФТ. Закрыл модалку → НОВОЕ видео сгенерилось на том же IP. Обход тривиален.")
             elif st3=="paywall":
-                log(">>> ВЫВОД: модалка возвращается / ген блокируется → лимит ЖЁСТКИЙ по IP. Обход = 1 ген/прогон (ротация раннера).")
+                log(">>> ВЫВОД: модалка возвращается → лимит ЖЁСТКИЙ по IP. Обход = 1 ген/прогон (ротация раннера).")
+            elif st3=="timeout":
+                log(">>> ВЫВОД: после закрытия НОВОЕ видео НЕ появилось (ген заблокирован, оверлей лишь скрыт) → лимит ЖЁСТКИЙ по IP. Обход = 1 ген/прогон.")
             else:
-                log(f">>> ген после закрытия: {st3} (неясно)")
+                log(f">>> ген после закрытия: {st3} {d3} (неясно)")
         else:
             log(">>> модалку закрыть не удалось стандартно — см. modal.png + кандидаты")
     else:
