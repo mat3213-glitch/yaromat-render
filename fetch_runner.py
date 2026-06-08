@@ -32,12 +32,22 @@ def yd_mkcol(path):
         cur = f"{cur}/{p}" if cur else p
         requests.request("MKCOL", f"{WEBDAV}/{urlquote(cur)}", auth=AUTH, timeout=30)
 
-def yd_put(local: Path, remote: str) -> bool:
-    with open(local, "rb") as f:
-        r = requests.put(f"{WEBDAV}/{urlquote(remote)}", data=f, auth=AUTH, timeout=300)
-    ok = r.status_code in (200, 201, 204)
-    print(f"  upload {'ok' if ok else 'FAIL '+str(r.status_code)}: {remote}", flush=True)
-    return ok
+def yd_put(local: Path, remote: str, retries: int = 4) -> bool:
+    # ЯД WebDAV рвёт соединение на крупных файлах → ретраи с бэкоффом
+    import time
+    for attempt in range(retries):
+        try:
+            with open(local, "rb") as f:
+                r = requests.put(f"{WEBDAV}/{urlquote(remote)}", data=f, auth=AUTH, timeout=600)
+            if r.status_code in (200, 201, 204):
+                print(f"  upload ok: {remote}", flush=True)
+                return True
+            print(f"  upload HTTP {r.status_code} (try {attempt+1})", flush=True)
+        except Exception as e:
+            print(f"  upload err {type(e).__name__} (try {attempt+1})", flush=True)
+        time.sleep(3 * (attempt + 1))
+    print(f"  upload FAIL after {retries}: {remote}", flush=True)
+    return False
 
 def fetch_direct(url: str, dest: Path) -> bool:
     r = requests.get(url, headers={"User-Agent": UA, "Referer": "https://www.pexels.com/"},
