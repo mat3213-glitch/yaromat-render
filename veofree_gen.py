@@ -69,8 +69,14 @@ with sync_playwright() as pw:
     btn=pg.query_selector("#generate_it")
     if ta and btn:
         ta.click(); ta.fill(PROMPT)
-        btn.click(timeout=8000)
-        for _ in range(30):
+        dismiss(pg)                                   # убрать рекламу/попапы перед кликом
+        try: btn.scroll_into_view_if_needed(timeout=4000)
+        except: pass
+        try: btn.click(timeout=8000)
+        except Exception:
+            try: btn.click(timeout=8000, force=True)   # сквозь возможный оверлей
+            except: pass
+        for _ in range(40):                            # до 200с (генерация бывает медленной)
             pg.wait_for_timeout(5000)
             if paywall(pg): status="paywall"; break
             v=pg.query_selector("video"); src=v.get_attribute("src") if v else None
