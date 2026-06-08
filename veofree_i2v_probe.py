@@ -114,6 +114,36 @@ with sync_playwright() as pw:
         log("НЕ нашёл file input")
     pg.screenshot(path=str(TMP/"02_uploaded.png"))
 
+    # модалка обрезки cropper.js — подтвердить синей кнопкой «Upload» (она перехватывает клики)
+    try:
+        cm=pg.query_selector("#cropModal")
+        if cm and cm.is_visible():
+            log("crop modal появилась — подтверждаю Upload")
+            cb=None
+            for sel in ["#cropModal button:has-text('Upload')","#cropModal a:has-text('Upload')",
+                        ".crop-modal button:has-text('Upload')","#cropModal .btn-primary",
+                        "#cropModal button:has-text('Crop')","#cropModal button:has-text('Confirm')",
+                        "#cropModal button:has-text('Done')"]:
+                try:
+                    b=pg.query_selector(sel)
+                    if b and b.is_visible(): cb=b; log(f"crop confirm via {sel}"); break
+                except: pass
+            if cb:
+                try: cb.click(timeout=8000)
+                except Exception: cb.click(timeout=8000, force=True)
+                for _ in range(15):
+                    pg.wait_for_timeout(1000)
+                    c2=pg.query_selector("#cropModal")
+                    if not (c2 and c2.is_visible()): break
+                pg.wait_for_timeout(3000); log("crop подтверждён (modal закрыт)")
+            else:
+                log("НЕ нашёл кнопку подтверждения кропа")
+        else:
+            log("crop modal не появилась")
+    except Exception as e:
+        log(f"crop handling err: {e}")
+    pg.screenshot(path=str(TMP/"02b_after_crop.png"))
+
     # промпт — прицельно в i2v-textarea
     ta=pg.query_selector("#fn__include_textarea_img_video") or next(
         (t for t in pg.query_selector_all("textarea") if t.is_visible()), None)
