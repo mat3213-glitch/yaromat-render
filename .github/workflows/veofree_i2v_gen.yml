@@ -1,0 +1,45 @@
+name: VeoFree i2v Generate (1 per run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      img_remote:
+        description: 'YaDisk path to RAW stock image (не уникализированный)'
+        required: true
+      prompt:
+        description: 'Motion prompt'
+        required: true
+      dest_folder:
+        description: 'ЯД destination folder'
+        required: true
+      out_name:
+        description: 'Output mp4 name (clip_01.mp4)'
+        required: true
+      aspect:
+        description: 'Crop aspect (9:16 / 16:9 / 1:1)'
+        required: false
+        default: '9:16'
+
+jobs:
+  gen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Playwright
+        run: |
+          pip install -q requests playwright
+          python -m playwright install --with-deps chromium
+      - name: Generate i2v
+        env:
+          YADISK_LOGIN:    ${{ secrets.YADISK_LOGIN }}
+          YADISK_PASSWORD: ${{ secrets.YADISK_PASSWORD }}
+          IMG_REMOTE:      ${{ inputs.img_remote }}
+          PROMPT:          ${{ inputs.prompt }}
+          DEST_FOLDER:     ${{ inputs.dest_folder }}
+          OUT_NAME:        ${{ inputs.out_name }}
+          ASPECT:          ${{ inputs.aspect }}
+        run: python veofree_i2v_gen.py
