@@ -12,6 +12,8 @@ ENV (из GH secrets):
   TELEGRAM_BOT_TOKEN  — токен бота
   ADMIN_CHAT_ID       — кому слать дайджест
   GITHUB_TOKEN        — для GitHub Search API (даёт сам Actions)
+  GEMINI_API_KEY      — (опц.) объяснение «что автоматизирует / чем полезно».
+                        Нет ключа или ошибка → fallback на описание репо.
 """
 
 from __future__ import annotations
@@ -32,6 +34,17 @@ SEEN_FILE = HERE / "repo_scout_seen.json"
 REPORT_FILE = HERE / "repo_scout_latest.md"
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Короткий контекст проекта — чтобы LLM объяснял пользу именно ДЛЯ нас, а не вообще.
+PROJECT_CONTEXT = (
+    "Проект yaromat — автоматизация музыкального контента (Future Garage / Downtempo). "
+    "Компоненты: нарезка клипов под BPM (ffmpeg + librosa, тяжёлое крутится на GitHub Actions), "
+    "генерация артов и AI-видео/фото (Qwen, Hunyuan, Gemini/Imagen), автопостинг в "
+    "Telegram/VK/OK/Pinterest/YouTube, Telegram-бот-админка. "
+    "Локальное железо слабое (Atom, 1.8 ГБ RAM, без GPU) — всё тяжёлое выносим на GH Actions или в облако."
+)
 
 KEYWORDS = {
     "automation": ["automation", "workflow", "bot", "scheduler", "pipeline", "autopost", "scraper"],
@@ -160,16 +173,95 @@ def build_candidates(max_per_query: int = 5) -> list[dict]:
     return out
 
 
+def enrich_with_llm(items: list[dict]) -> None:
+    """Добавляет каждому репо поле 'blurb' — простой русский текст
+    «что автоматизирует / чем полезно проекту». Одним батч-запросом к Gemini.
+
+    Бесшумный fallback: нет ключа, ошибка сети, лимит или кривой ответ →
+    blurb не выставляется, дайджест откатывается на описание. Скаут не падает.
+    """
+    if not items or not GEMINI_API_KEY:
+        return
+
+    catalog = [
+        {
+            "full_name": it["full_name"],
+            "stars": it["stars"],
+            "language": it.get("language") or "",
+            "description": (it.get("description") or "")[:300],
+        }
+        for it in items
+    ]
+    prompt = (
+        f"{PROJECT_CONTEXT}\n\n"
+        "Ниже список GitHub-репозиториев (имя, звёзды, язык, описание). Описания бывают "
+        "обрезанными или не на русском — додумай по названию и контексту.\n"
+        "Для КАЖДОГО репо напиши короткое объяснение простым русским языком: "
+        "(1) что он автоматизирует/делает, (2) чем конкретно может быть полезен нашему проекту "
+        "(или честно: 'для проекта вряд ли пригодится — <почему>', если связи нет).\n"
+        "2–3 предложения, без воды и маркетинга, без markdown.\n"
+        "Верни СТРОГО JSON-массив объектов {\"full_name\":..., \"blurb\":...} в том же порядке, "
+        "без обёрток и пояснений.\n\n"
+        f"Репозитории:\n{json.dumps(catalog, ensure_ascii=False, indent=1)}"
+    )
+
+    # Цепочка моделей: основная + фолбэки на случай 429 (квота) / 503 (перегрузка).
+    models = [GEMINI_MODEL] + [m for m in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest")
+                               if m != GEMINI_MODEL]
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4, "response_mime_type": "application/json"},
+    }
+    raw = None
+    for model in models:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent?key={GEMINI_API_KEY}")
+        for attempt in range(2):  # 2 попытки на модель: transient 503/429 часто проходят
+            try:
+                r = requests.post(url, json=payload, timeout=90)
+            except Exception as e:
+                print(f"[llm] {model}: сеть ({e})")
+                break
+            if r.status_code == 200:
+                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                break
+            if r.status_code in (429, 503) and attempt == 0:
+                continue  # сразу вторая попытка, потом переходим к следующей модели
+            print(f"[llm] {model}: HTTP {r.status_code}")
+            break
+        if raw is not None:
+            break
+
+    if raw is None:
+        print("[llm] все модели недоступны — fallback на описания")
+        return
+
+    try:
+        raw = re.sub(r"^```(?:json)?|```$", "", raw.strip()).strip()
+        blurbs = json.loads(raw)
+        by_name = {str(b.get("full_name")): str(b.get("blurb") or "").strip()
+                   for b in blurbs if isinstance(b, dict)}
+        n = 0
+        for it in items:
+            b = by_name.get(it["full_name"])
+            if b:
+                it["blurb"] = b
+                n += 1
+        print(f"[llm] обогащено {n}/{len(items)} репо")
+    except Exception as e:
+        print(f"[llm] разбор ответа не удался ({e}) — fallback на описания")
+
+
 def build_digest(new_items: list[dict], total: int) -> str:
     if not new_items:
         return ""
     lines = [f"🔭 GitHub scout: {len(new_items)} новых репо для проекта\n"]
     for it in new_items[:12]:
         lines.append(f"⭐ {it['stars']}  {it['full_name']}")
-        d = (it.get("description") or "")[:90]
-        if d:
-            lines.append(f"   {d}")
-        lines.append(f"   {it['html_url']}")
+        blurb = it.get("blurb") or (it.get("description") or "")[:140]
+        if blurb:
+            lines.append(f"{blurb}")
+        lines.append(f"{it['html_url']}\n")
     return "\n".join(lines)
 
 
@@ -177,8 +269,10 @@ def write_report(items: list[dict]):
     lines = [f"# Repo Scout — {datetime.now().isoformat()}", "", f"Всего в шортлисте: {len(items)}", ""]
     for it in items:
         lines += [f"- **{it['full_name']}** ⭐{it['stars']} [{it['category']}]",
-                  f"  - {it['html_url']}",
-                  f"  - {(it.get('description') or '')[:160]}"]
+                  f"  - {it['html_url']}"]
+        if it.get("blurb"):
+            lines.append(f"  - 💡 {it['blurb']}")
+        lines.append(f"  - 📄 {(it.get('description') or '')[:160]}")
     REPORT_FILE.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -211,6 +305,7 @@ def main():
     args = ap.parse_args()
 
     items = build_candidates()[: max(1, args.top)]
+    enrich_with_llm(items)
     write_report(items)
 
     seen = load_seen()

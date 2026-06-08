@@ -30,6 +30,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SCOUT_CHAT_ID: ${{ secrets.SCOUT_CHAT_ID }}
           SCOUT_THREAD_ID: ${{ secrets.SCOUT_THREAD_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python repo_scout.py --top 25
 
       - name: Commit updated state
