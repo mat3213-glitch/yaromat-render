@@ -34,6 +34,8 @@ SEEN_FILE = HERE / "repo_scout_seen.json"
 REPORT_FILE = HERE / "repo_scout_latest.md"
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
@@ -173,14 +175,70 @@ def build_candidates(max_per_query: int = 5) -> list[dict]:
     return out
 
 
+def _call_groq(prompt: str) -> str | None:
+    """Groq (OpenAI-совместимый). Возвращает сырой текст ответа или None.
+    На раннере GH Actions (не-RU IP) работает; локально из РФ может быть 403 (гео)."""
+    if not GROQ_API_KEY:
+        return None
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=90,
+        )
+        if r.status_code == 200:
+            print(f"[llm] обогащение через Groq ({GROQ_MODEL})")
+            return r.json()["choices"][0]["message"]["content"].strip()
+        print(f"[llm] Groq HTTP {r.status_code} — пробую Gemini")
+    except Exception as e:
+        print(f"[llm] Groq сеть ({e}) — пробую Gemini")
+    return None
+
+
+def _call_gemini(prompt: str) -> str | None:
+    """Gemini-фолбэк. Цепочка моделей на случай 429 (квота) / 503 (перегрузка)."""
+    if not GEMINI_API_KEY:
+        return None
+    models = [GEMINI_MODEL] + [m for m in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest")
+                               if m != GEMINI_MODEL]
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.4, "response_mime_type": "application/json"},
+    }
+    for model in models:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent?key={GEMINI_API_KEY}")
+        for attempt in range(2):  # 2 попытки: transient 503/429 часто проходят
+            try:
+                r = requests.post(url, json=payload, timeout=90)
+            except Exception as e:
+                print(f"[llm] Gemini {model}: сеть ({e})")
+                break
+            if r.status_code == 200:
+                print(f"[llm] обогащение через Gemini ({model})")
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            if r.status_code in (429, 503) and attempt == 0:
+                continue
+            print(f"[llm] Gemini {model}: HTTP {r.status_code}")
+            break
+    return None
+
+
 def enrich_with_llm(items: list[dict]) -> None:
     """Добавляет каждому репо поле 'blurb' — простой русский текст
-    «что автоматизирует / чем полезно проекту». Одним батч-запросом к Gemini.
+    «что автоматизирует / чем полезно проекту». Одним батч-запросом к LLM.
 
-    Бесшумный fallback: нет ключа, ошибка сети, лимит или кривой ответ →
+    Провайдеры по приоритету: Groq (основной) → Gemini (фолбэк).
+    Бесшумный fallback: нет ключей, ошибка сети, лимит или кривой ответ →
     blurb не выставляется, дайджест откатывается на описание. Скаут не падает.
     """
-    if not items or not GEMINI_API_KEY:
+    if not items or not (GROQ_API_KEY or GEMINI_API_KEY):
         return
 
     catalog = [
@@ -205,35 +263,10 @@ def enrich_with_llm(items: list[dict]) -> None:
         f"Репозитории:\n{json.dumps(catalog, ensure_ascii=False, indent=1)}"
     )
 
-    # Цепочка моделей: основная + фолбэки на случай 429 (квота) / 503 (перегрузка).
-    models = [GEMINI_MODEL] + [m for m in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest")
-                               if m != GEMINI_MODEL]
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.4, "response_mime_type": "application/json"},
-    }
-    raw = None
-    for model in models:
-        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-               f"{model}:generateContent?key={GEMINI_API_KEY}")
-        for attempt in range(2):  # 2 попытки на модель: transient 503/429 часто проходят
-            try:
-                r = requests.post(url, json=payload, timeout=90)
-            except Exception as e:
-                print(f"[llm] {model}: сеть ({e})")
-                break
-            if r.status_code == 200:
-                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                break
-            if r.status_code in (429, 503) and attempt == 0:
-                continue  # сразу вторая попытка, потом переходим к следующей модели
-            print(f"[llm] {model}: HTTP {r.status_code}")
-            break
-        if raw is not None:
-            break
-
+    # Groq основной, Gemini фолбэк. Первый, кто вернёт текст — побеждает.
+    raw = _call_groq(prompt) or _call_gemini(prompt)
     if raw is None:
-        print("[llm] все модели недоступны — fallback на описания")
+        print("[llm] все провайдеры недоступны — fallback на описания")
         return
 
     try:
