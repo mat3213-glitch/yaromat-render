@@ -15,7 +15,7 @@ IMG_REMOTE=os.environ.get("IMG_REMOTE","Content factory/_probe_i2v_in/anchor.png
 PROMPT=os.environ.get("PROMPT","slow immersive sinking deeper into clear blue water, gentle light rays, subtle drift, no text, no people")
 DEST=os.environ.get("DEST_FOLDER","Content factory/_probe_i2v")
 OUT=os.environ.get("OUT_NAME","i2v_clip.mp4")
-URL="https://veoaifree.com/seedance-2-0-video-generator-free/"
+URL=os.environ.get("VEO_URL","https://veoaifree.com/photo-and-image-to-video-generator/")
 WEBDAV="https://webdav.yandex.ru"; AUTH=(YL,YP); TMP=Path("/tmp/i2v"); TMP.mkdir(exist_ok=True)
 R=[]
 def log(s): print(s,flush=True); R.append(str(s))
@@ -70,12 +70,15 @@ with sync_playwright() as pw:
     pg.goto(URL,wait_until="domcontentloaded",timeout=60000); pg.wait_for_timeout(5000)
     dismiss(pg)
 
-    # переключаемся на таб «Image to Video»
+    # выделенная i2v-страница: таб не нужен, но если есть #tab3-btn — кликнем (best-effort, коротко)
     try:
-        pg.click("#tab3-btn", timeout=8000); pg.wait_for_timeout(2500)
-        log("кликнул #tab3-btn (Image to Video)")
+        t3=pg.query_selector("#tab3-btn")
+        if t3 and t3.is_visible():
+            t3.click(timeout=3000); pg.wait_for_timeout(2000); log("кликнул #tab3-btn")
+        else:
+            log("tab3 нет/скрыт — это выделенная i2v-страница, ок")
     except Exception as e:
-        log(f"tab3 click err: {e}")
+        log(f"tab3 best-effort: {e}")
     pg.screenshot(path=str(TMP/"01_tab3.png"))
 
     # разведка структуры i2v-таба (видимые элементы)
