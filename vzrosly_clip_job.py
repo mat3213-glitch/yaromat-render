@@ -199,8 +199,9 @@ def build_timeline(variant="full", bpm=87.0, seed=42, calm=False):
         raw += [(k, b, "groove") for k in groove]          # 1..6
         strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
                        "a1", "c4"]
-        n_str = 6 if calm else 10
-        d_str = (1.0 if calm else 0.5) * b
+        random.shuffle(strobe_pool)                  # порядок строба варьируется по seed
+        n_str = 6 if calm else 8
+        d_str = (1.0 if calm else 0.75) * b          # строб на 0.75 доли (не слепые 0.5) → в ритм
         for i in range(n_str):
             raw.append((strobe_pool[i % len(strobe_pool)], d_str, "strobe"))  # 7..
         raw.append(("anchorp", 3 * b, "breath"))           # 17: held breath
@@ -212,8 +213,9 @@ def build_timeline(variant="full", bpm=87.0, seed=42, calm=False):
         raw += [(k, b, "groove") for k in groove]          # 1..12
         strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
                        "a1", "c4", "crowd", "c1f", "a2f", "c2f", "clock", "c4f"]
-        n_str = 10 if calm else 20
-        d_str = (1.0 if calm else 0.5) * b
+        random.shuffle(strobe_pool)                  # порядок строба варьируется по seed
+        n_str = 10 if calm else 14
+        d_str = (1.0 if calm else 0.75) * b          # строб на 0.75 доли (не слепые 0.5) → в ритм
         for i in range(n_str):
             raw.append((strobe_pool[i % len(strobe_pool)], d_str, "strobe"))  # 13..
         raw.append(("anchorp", 6 * b, "breath"))           # 33: held breath
