@@ -89,6 +89,28 @@ def motion_seg(cover: Path, dur: float, mode: str, theta: float, blend: str,
         fc = (f"[0]{pre},crop={W}:{H}:"
               f"x='{drift(cx, ax, '+', ph_pan)}':y='{drift(cy, ay, '+', ph_pan)}',"
               f"format=yuv420p[v]")
+    elif mode == "split":  # распил кадра на 2 части, половины дрейфуют в разные стороны
+        # ось (гориз/верт) и направление (apart/together) из theta → рандом по сегментам.
+        # фон = размытая затемнённая копия заполняет открывающийся зазор.
+        ph = f"(t/{dur:.4f})"
+        horiz = math.cos(theta) >= 0
+        sgn = 1 if math.sin(theta) >= 0 else -1
+        if horiz:
+            amp = H * 0.09 * sgn
+            fc = (f"[0]scale={W}:{H},crop={W}:{H},setsar=1[bz];[bz]split=3[bg][t][b];"
+                  f"[bg]scale=ceil({W}*1.18/2)*2:ceil({H}*1.18/2)*2,crop={W}:{H},boxblur=14:2,eq=brightness=-0.05,format=yuv420p[bgd];"
+                  f"[t]crop={W}:{H//2}:0:0,format=yuv420p[top];"
+                  f"[b]crop={W}:{H//2}:0:{H//2},format=yuv420p[bot];"
+                  f"[bgd][top]overlay=x=0:y='0-({amp:.1f})*{ph}'[o1];"
+                  f"[o1][bot]overlay=x=0:y='{H//2}+({amp:.1f})*{ph}',format=yuv420p[v]")
+        else:
+            amp = W * 0.09 * sgn
+            fc = (f"[0]scale={W}:{H},crop={W}:{H},setsar=1[bz];[bz]split=3[bg][l][r];"
+                  f"[bg]scale=ceil({W}*1.18/2)*2:ceil({H}*1.18/2)*2,crop={W}:{H},boxblur=14:2,eq=brightness=-0.05,format=yuv420p[bgd];"
+                  f"[l]crop={W//2}:{H}:0:0,format=yuv420p[lft];"
+                  f"[r]crop={W//2}:{H}:{W//2}:0,format=yuv420p[rgt];"
+                  f"[bgd][lft]overlay=x='0-({amp:.1f})*{ph}':y=0[o1];"
+                  f"[o1][rgt]overlay=x='{W//2}+({amp:.1f})*{ph}':y=0,format=yuv420p[v]")
     else:
         ph = ph_in if mode == "inward" else ph_pan
         # format=gbrp на входах blend → бленд в RGB (иначе screen/lighten сдвигают цвет в фиолет)
@@ -182,7 +204,7 @@ STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
              "fadeblack", "slideup", "fade", "fadewhite"]
 
 
-def build_timeline(variant="full", bpm=87.0, seed=42, calm=False):
+def build_timeline(variant="full", bpm=87.0, seed=42, calm=False, split=False):
     """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur,region).
     variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата.
     bpm: темп трека — задаёт долю (held↔строб ритм матчит бит). Дефолт 87 (трек «взрослый»).
@@ -228,6 +250,8 @@ def build_timeline(variant="full", bpm=87.0, seed=42, calm=False):
             mode, blend = "pan", "average"
         elif region == "outro":
             mode, blend = "single", "none"
+        elif split and region in ("groove", "strobe"):
+            mode, blend = "split", "none"   # распил+дрейф половин (тема «ускользающий»)
         elif calm:
             # спокойнее: больше мягкого дрейфа, меньше схождения/жёстких блендов
             mode = random.choice(["pan", "pan", "inward"])
@@ -300,6 +324,7 @@ def main():
     video_keys   = job.get("video_keys", [])      # ключи-сегменты из видео-футажа (Pexels) вместо стиллов
     seed         = int(job.get("seed", 42))        # per-track: монтаж + текстура (см. build_timeline)
     calm         = bool(job.get("calm", False))     # безударные/амбиентные версии: мягкий строб
+    split        = bool(job.get("split", False))     # распил кадра на 2 части + дрейф половин
 
     # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
     if preview:
@@ -326,8 +351,8 @@ def main():
         cover_path[key] = p
 
     # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
-    seq, total = build_timeline(variant, bpm, seed, calm)
-    print(f"  variant={variant} bpm={bpm} seed={seed} calm={calm}")
+    seq, total = build_timeline(variant, bpm, seed, calm, split)
+    print(f"  variant={variant} bpm={bpm} seed={seed} calm={calm} split={split}")
     nominal = round(total, 3)
     print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
