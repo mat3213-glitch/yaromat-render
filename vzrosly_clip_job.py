@@ -182,11 +182,13 @@ STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
              "fadeblack", "slideup", "fade", "fadewhite"]
 
 
-def build_timeline(variant="full", bpm=87.0):
+def build_timeline(variant="full", bpm=87.0, seed=42):
     """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur,region).
     variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата.
-    bpm: темп трека — задаёт долю (held↔строб ритм матчит бит). Дефолт 87 (трек «взрослый»)."""
-    random.seed(42)  # детерминизм: square и vertical монтируются одинаково
+    bpm: темп трека — задаёт долю (held↔строб ритм матчит бит). Дефолт 87 (трек «взрослый»).
+    seed: per-track — одинаков для square/vertical одного трека (два формата = один клип),
+    но РАЗНЫЙ между треками → разная хореография монтажа (режимы/бленды/направления/переходы)."""
+    random.seed(seed)  # детерминизм внутри трека; разнообразие между треками
     b = 60.0 / bpm
     raw = []
     if variant == "short":
@@ -281,6 +283,7 @@ def main():
     track_credit = job.get("track_credit", "")   # старт: «Артист — Трек» (режим reference)
     watermark    = job.get("watermark", "")       # весь клип: кредит yaromat (привязка охватов)
     video_keys   = job.get("video_keys", [])      # ключи-сегменты из видео-футажа (Pexels) вместо стиллов
+    seed         = int(job.get("seed", 42))        # per-track: монтаж + текстура (см. build_timeline)
 
     # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
     if preview:
@@ -307,8 +310,8 @@ def main():
         cover_path[key] = p
 
     # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
-    seq, total = build_timeline(variant, bpm)
-    print(f"  variant={variant} bpm={bpm}")
+    seq, total = build_timeline(variant, bpm, seed)
+    print(f"  variant={variant} bpm={bpm} seed={seed}")
     nominal = round(total, 3)
     print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
@@ -408,24 +411,35 @@ def main():
     draw_chain = ("," + ",".join(draw)) if draw else ""
 
     # плотность: контраст/деసатурация → scratch + grit (screen) → зерно + виньетка → текст → аудио
+    # уникализация текстуры per-track (тот же seed): флип/непрозрачность scratch+grit + сид/сила зерна
+    # + сдвиг старта оверлеев (-ss) → «рукой» слой и зерно разные на каждом треке, square=vertical
+    tex = random.Random(seed)
+    scr_flip = ",hflip" if tex.random() < 0.5 else ""
+    grt_flip = ",hflip" if tex.random() < 0.5 else ""
+    scr_op   = round(tex.uniform(0.5, 0.7), 2)
+    grt_op   = round(tex.uniform(0.4, 0.6), 2)
+    nz_str   = 10 + tex.randint(0, 5)
+    nz_seed  = tex.randint(1, 99999)
+    scr_ss   = round(tex.uniform(0.0, 4.0), 2)   # старт scratch-петли
+    grt_ss   = round(tex.uniform(0.0, 4.0), 2)   # старт grit-петли
     result = WORK / out_name
     afade_out = max(0.0, duration - 1.5)
     fc = (
         f"[0:v]fps={FPS},eq=contrast=1.14:saturation=0.9:brightness=-0.02:gamma=0.96,"
         f"format=gbrp,setpts=PTS-STARTPTS[v];"
-        f"[1:v]scale={W}:{H},fps={FPS},format=gray,format=gbrp,setpts=PTS-STARTPTS[scr];"
-        f"[2:v]scale={W}:{H},fps={FPS},format=gray,format=gbrp,setpts=PTS-STARTPTS[grt];"
-        f"[v][scr]blend=all_mode=screen:all_opacity=0.6[b1];"
-        f"[b1][grt]blend=all_mode=screen:all_opacity=0.5[b2];"
-        f"[b2]format=yuv420p,noise=alls=12:allf=t+u,"
+        f"[1:v]scale={W}:{H},fps={FPS},format=gray{scr_flip},format=gbrp,setpts=PTS-STARTPTS[scr];"
+        f"[2:v]scale={W}:{H},fps={FPS},format=gray{grt_flip},format=gbrp,setpts=PTS-STARTPTS[grt];"
+        f"[v][scr]blend=all_mode=screen:all_opacity={scr_op}[b1];"
+        f"[b1][grt]blend=all_mode=screen:all_opacity={grt_op}[b2];"
+        f"[b2]format=yuv420p,noise=alls={nz_str}:all_seed={nz_seed}:allf=t+u,"
         f"vignette=angle=PI/4.5,"
         f"trim=duration={duration},setpts=PTS-STARTPTS{draw_chain}[vout]"
     )
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", str(body),
-        "-stream_loop", "-1", "-i", SCRATCH,
-        "-stream_loop", "-1", "-i", GRIT,
+        "-stream_loop", "-1", "-ss", str(scr_ss), "-i", SCRATCH,
+        "-stream_loop", "-1", "-ss", str(grt_ss), "-i", GRIT,
         "-ss", str(audio_start), "-t", str(duration), "-i", str(WORK / "track.mp3"),
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "3:a",
