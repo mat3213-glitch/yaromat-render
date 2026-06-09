@@ -182,12 +182,14 @@ STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
              "fadeblack", "slideup", "fade", "fadewhite"]
 
 
-def build_timeline(variant="full", bpm=87.0, seed=42):
+def build_timeline(variant="full", bpm=87.0, seed=42, calm=False):
     """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur,region).
     variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата.
     bpm: темп трека — задаёт долю (held↔строб ритм матчит бит). Дефолт 87 (трек «взрослый»).
     seed: per-track — одинаков для square/vertical одного трека (два формата = один клип),
-    но РАЗНЫЙ между треками → разная хореография монтажа (режимы/бленды/направления/переходы)."""
+    но РАЗНЫЙ между треками → разная хореография монтажа (режимы/бленды/направления/переходы).
+    calm: для безударных/амбиентных версий — строб режется вдвое медленнее и короче,
+    переходы мягкие (без вспышек в белый), движение спокойнее. Энергия видео = энергии трека."""
     random.seed(seed)  # детерминизм внутри трека; разнообразие между треками
     b = 60.0 / bpm
     raw = []
@@ -197,8 +199,10 @@ def build_timeline(variant="full", bpm=87.0, seed=42):
         raw += [(k, b, "groove") for k in groove]          # 1..6
         strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
                        "a1", "c4"]
-        for i in range(10):
-            raw.append((strobe_pool[i % len(strobe_pool)], 0.5 * b, "strobe"))  # 7..16
+        n_str = 6 if calm else 10
+        d_str = (1.0 if calm else 0.5) * b
+        for i in range(n_str):
+            raw.append((strobe_pool[i % len(strobe_pool)], d_str, "strobe"))  # 7..
         raw.append(("anchorp", 3 * b, "breath"))           # 17: held breath
         raw.append(("child", 2.3, "outro"))                # 18: warm outro
     else:
@@ -208,8 +212,10 @@ def build_timeline(variant="full", bpm=87.0, seed=42):
         raw += [(k, b, "groove") for k in groove]          # 1..12
         strobe_pool = ["clock", "c1", "crowd", "a4", "c2", "a2", "anchor", "c3",
                        "a1", "c4", "crowd", "c1f", "a2f", "c2f", "clock", "c4f"]
-        for i in range(20):
-            raw.append((strobe_pool[i % len(strobe_pool)], 0.5 * b, "strobe"))  # 13..32
+        n_str = 10 if calm else 20
+        d_str = (1.0 if calm else 0.5) * b
+        for i in range(n_str):
+            raw.append((strobe_pool[i % len(strobe_pool)], d_str, "strobe"))  # 13..
         raw.append(("anchorp", 6 * b, "breath"))           # 33: held breath
         raw.append(("child", 4.54, "outro"))               # 34: warm outro
 
@@ -220,6 +226,10 @@ def build_timeline(variant="full", bpm=87.0, seed=42):
             mode, blend = "pan", "average"
         elif region == "outro":
             mode, blend = "single", "none"
+        elif calm:
+            # спокойнее: больше мягкого дрейфа, меньше схождения/жёстких блендов
+            mode = random.choice(["pan", "pan", "inward"])
+            blend = random.choice(["average", "average", "screen"])
         else:
             # рандомно встречный дрейф или схождение «внутрь» (фидбэк yaromat)
             mode = random.choice(["pan", "inward", "inward"])
@@ -231,7 +241,10 @@ def build_timeline(variant="full", bpm=87.0, seed=42):
         elif region == "groove":
             tin, tdur = random.choice(GROOVE_TR), 0.15
         elif region == "strobe":
-            tin, tdur = random.choice(STROBE_TR), (0.05 if raw[i][1] < 0.4 else 0.1)
+            if calm:
+                tin, tdur = random.choice(["fade", "fade", "dissolve", "fadeblack"]), 0.25
+            else:
+                tin, tdur = random.choice(STROBE_TR), (0.05 if raw[i][1] < 0.4 else 0.1)
         elif region == "breath":
             tin, tdur = random.choice(["fadeblack", "dissolve"]), 0.30
         elif region == "outro":
@@ -284,6 +297,7 @@ def main():
     watermark    = job.get("watermark", "")       # весь клип: кредит yaromat (привязка охватов)
     video_keys   = job.get("video_keys", [])      # ключи-сегменты из видео-футажа (Pexels) вместо стиллов
     seed         = int(job.get("seed", 42))        # per-track: монтаж + текстура (см. build_timeline)
+    calm         = bool(job.get("calm", False))     # безударные/амбиентные версии: мягкий строб
 
     # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
     if preview:
@@ -310,8 +324,8 @@ def main():
         cover_path[key] = p
 
     # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
-    seq, total = build_timeline(variant, bpm, seed)
-    print(f"  variant={variant} bpm={bpm} seed={seed}")
+    seq, total = build_timeline(variant, bpm, seed, calm)
+    print(f"  variant={variant} bpm={bpm} seed={seed} calm={calm}")
     nominal = round(total, 3)
     print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
