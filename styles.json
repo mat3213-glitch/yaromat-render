@@ -1,0 +1,62 @@
+{
+  "_doc": "Пул визуальных стилей для vzrosly-движка. Каждый стиль = плёночный лук (грейд+колорбаланс+зерно+виньетка). Движок выдаёт стиль на трек детерминированно (seed % N) или по job['style']. Фаза-2 добавит поле 'scenario' (движок монтажа). Фаза-3 агент-насмотренность дописывает сюда новые объекты. БЕЗ неона — приглушённо-плёночно.",
+  "_version": 1,
+  "styles": [
+    {
+      "name": "cold_steel",
+      "note": "холодная сталь — базовый сдержанный лук, синь в тенях",
+      "eq": "contrast=1.14:saturation=0.85:brightness=-0.02:gamma=0.96",
+      "balance": "bs=0.04:bm=0.02:rs=-0.02",
+      "grain": [10, 15],
+      "vignette": "angle=PI/4.5"
+    },
+    {
+      "name": "warm_amber",
+      "note": "тёплый янтарь — мягкая теплота, для светлых/ностальгичных треков",
+      "eq": "contrast=1.10:saturation=1.05:brightness=0.0:gamma=0.98",
+      "balance": "rs=0.05:rm=0.03:bs=-0.05:bh=-0.03",
+      "grain": [8, 12],
+      "vignette": "angle=PI/5"
+    },
+    {
+      "name": "faded_film",
+      "note": "выцветшая плёнка — низкий контраст, поднятые тени, тяжёлое зерно, без виньетки",
+      "eq": "contrast=0.92:saturation=0.75:brightness=0.04:gamma=1.06",
+      "balance": "gm=0.02:rm=0.02:bs=0.03",
+      "grain": [15, 21],
+      "vignette": null
+    },
+    {
+      "name": "bleach_highcon",
+      "note": "выбеленный высокий контраст — жёсткий, почти моно",
+      "eq": "contrast=1.34:saturation=0.55:brightness=-0.01:gamma=0.92",
+      "balance": "bs=0.02",
+      "grain": [11, 16],
+      "vignette": "angle=PI/4"
+    },
+    {
+      "name": "teal_shadow",
+      "note": "бирюза в тенях, тёплые света — кинематографичный moody (без неона)",
+      "eq": "contrast=1.16:saturation=0.8:brightness=-0.03:gamma=0.97",
+      "balance": "gs=0.04:bs=0.05:rh=0.03:rm=0.02",
+      "grain": [10, 14],
+      "vignette": "angle=PI/4.5"
+    },
+    {
+      "name": "sepia_mono",
+      "note": "сепия почти-моно — интимный, тёплый, низкая сатурация",
+      "eq": "contrast=1.08:saturation=0.35:brightness=0.0:gamma=1.0",
+      "balance": "rs=0.08:rm=0.05:gs=0.03:bs=-0.08:bm=-0.05",
+      "grain": [12, 16],
+      "vignette": "angle=PI/5"
+    },
+    {
+      "name": "deep_night",
+      "note": "глубокая ночь — тёмный, высокий контраст, холодная синь, тяжёлое зерно, сильная виньетка",
+      "eq": "contrast=1.28:saturation=0.7:brightness=-0.08:gamma=0.9",
+      "balance": "bs=0.06:bm=0.03:gs=0.02",
+      "grain": [16, 22],
+      "vignette": "angle=PI/3.8"
+    }
+  ]
+}

@@ -36,6 +36,31 @@ FMT = {"square": (1080, 1080), "vertical": (1080, 1920)}
 FPS = 25
 BEAT = 60.0 / 87.0  # 0.6897s
 
+STYLES_FILE = REPO / "styles.json"
+_DEFAULT_STYLE = {"name": "cold_steel",
+                  "eq": "contrast=1.14:saturation=0.9:brightness=-0.02:gamma=0.96",
+                  "balance": None, "grain": [10, 15], "vignette": "angle=PI/4.5"}
+
+
+def load_styles() -> list:
+    """Пул визуальных луков из styles.json (грейд+колорбаланс+зерно+виньетка)."""
+    try:
+        st = json.loads(STYLES_FILE.read_text())["styles"]
+        return st or [_DEFAULT_STYLE]
+    except Exception as e:
+        print(f"  WARN: styles.json не прочитан ({e}) — дефолтный {_DEFAULT_STYLE['name']}")
+        return [_DEFAULT_STYLE]
+
+
+def pick_style(styles: list, seed: int, override: str = "") -> dict:
+    """Стиль на трек: явный job['style'] либо детерминированно от seed (разный трек → разный лук)."""
+    if override:
+        for s in styles:
+            if s["name"] == override:
+                return s
+        print(f"  WARN: стиль '{override}' не найден в styles.json — выбор по seed")
+    return styles[seed % len(styles)]
+
 
 def yd_get(remote: str, local: Path) -> bool:
     local.parent.mkdir(parents=True, exist_ok=True)
@@ -204,7 +229,7 @@ STROBE_TR = ["fade", "fade", "fade", "fadewhite", "slideleft", "fade",
              "fadeblack", "slideup", "fade", "fadewhite"]
 
 
-def build_timeline(variant="full", bpm=87.0, seed=42, calm=False, split=False):
+def _timeline_collage(variant="full", bpm=87.0, seed=42, calm=False, split=False):
     """Список сегментов: dict(key,dur,mode,theta,blend,tin,tdur,region).
     variant: 'full' (~28с) | 'short' (~14с, для X) — та же биполярная структура, сжата.
     bpm: темп трека — задаёт долю (held↔строб ритм матчит бит). Дефолт 87 (трек «взрослый»).
@@ -283,6 +308,66 @@ def build_timeline(variant="full", bpm=87.0, seed=42, calm=False, split=False):
     return seq, total
 
 
+def _timeline_kenburns(variant="full", bpm=87.0, seed=42):
+    """Сценарий 'kenburns': кинематографичные длинные одиночные планы, нежный дрейф,
+    мягкие переходы, БЕЗ строба. Спокойнее коллажа — для медитативной динамики."""
+    random.seed(seed + 1001)
+    b = 60.0 / bpm
+    pool = ["c1", "c2", "c3", "c4", "crowd", "clock", "a1", "a2", "a4"]
+    random.shuffle(pool)
+    seq = [dict(key="anchor", dur=6 * b, mode="single", theta=random.choice(DIRS),
+                blend="none", tin=None, tdur=0.0, region="intro")]
+    n_mid  = 4 if variant == "short" else 6
+    shot_b = 3.0 if variant == "short" else 3.5
+    for i in range(n_mid):
+        seq.append(dict(key=pool[i % len(pool)], dur=shot_b * b, mode="single",
+                        theta=random.choice(DIRS), blend="none",
+                        tin=random.choice(["dissolve", "fade", "fadegrays"]), tdur=0.5,
+                        region="groove"))
+    seq.append(dict(key="anchorp", dur=(4 if variant == "short" else 6) * b, mode="single",
+                    theta=random.choice(DIRS), blend="none",
+                    tin=random.choice(["fadeblack", "dissolve"]), tdur=0.5, region="breath"))
+    seq.append(dict(key="child", dur=(2.3 if variant == "short" else 4.54), mode="single",
+                    theta=random.choice(DIRS), blend="none", tin="fadewhite", tdur=0.4,
+                    region="outro"))
+    return seq, sum(s["dur"] for s in seq)
+
+
+def _timeline_hardcut(variant="full", bpm=87.0, seed=42):
+    """Сценарий 'hardcut': жёсткая нарезка по биту — равные 1-долевые планы (иногда 0.5),
+    почти мгновенные переходы (~1 кадр = cut). Ритмичный, ударный характер."""
+    random.seed(seed + 2002)
+    b = 60.0 / bpm
+    pool = ["c1", "c2", "c3", "c4", "c1f", "c2f", "c4f", "crowd", "clock",
+            "a1", "a2", "a2f", "a4", "anchor"]
+    random.shuffle(pool)
+    seq = [dict(key="anchor", dur=4 * b, mode="single", theta=random.choice(DIRS),
+                blend="none", tin=None, tdur=0.0, region="intro")]
+    n_cut = 12 if variant == "short" else 20
+    for i in range(n_cut):
+        d = (0.5 if i % 4 == 3 else 1.0) * b          # ритм: в осн. 1 доля, иногда двойное время
+        seq.append(dict(key=pool[i % len(pool)], dur=d, mode="single",
+                        theta=random.choice(DIRS), blend="none",
+                        tin="fade", tdur=0.04, region="groove"))   # tdur ~1 кадр = жёсткий cut
+    seq.append(dict(key="anchorp", dur=4 * b, mode="single", theta=random.choice(DIRS),
+                    blend="none", tin=random.choice(["fadeblack", "dissolve"]), tdur=0.25,
+                    region="breath"))
+    seq.append(dict(key="child", dur=(2.3 if variant == "short" else 4.54), mode="single",
+                    theta=random.choice(DIRS), blend="none", tin="fadewhite", tdur=0.4,
+                    region="outro"))
+    return seq, sum(s["dur"] for s in seq)
+
+
+def build_timeline(variant="full", bpm=87.0, seed=42, calm=False, split=False, scenario="collage"):
+    """Диспетчер сценариев монтажа (ось разнообразия, независима от лука/стиля).
+    collage (дефолт, биполярный коллаж + calm/split) | kenburns | hardcut."""
+    if scenario == "kenburns":
+        return _timeline_kenburns(variant, bpm, seed)
+    if scenario == "hardcut":
+        return _timeline_hardcut(variant, bpm, seed)
+    return _timeline_collage(variant, bpm, seed, calm, split)
+
+
 # источники-ассеты (имена файлов) и спецификация cover-кадров: ключ → (src, zoom, flip).
 # Общий источник правды для рендера и для локального сториборда (preview tier 1).
 SRC_ASSETS = ["anchor.png", "cold_01.png", "cold_02.png", "cold_03.png", "cold_04.png",
@@ -325,6 +410,9 @@ def main():
     seed         = int(job.get("seed", 42))        # per-track: монтаж + текстура (см. build_timeline)
     calm         = bool(job.get("calm", False))     # безударные/амбиентные версии: мягкий строб
     split        = bool(job.get("split", False))     # распил кадра на 2 части + дрейф половин
+    styles = load_styles()
+    style  = pick_style(styles, seed, job.get("style", ""))  # per-track лук (грейд/зерно/виньетка)
+    scenario = job.get("scenario", "collage")                # per-track сценарий монтажа (ось разнообразия)
 
     # preview tier 2: половинное разрешение + ultrafast → дешёвый proxy для ревью движения/плотности/ритма
     if preview:
@@ -351,8 +439,9 @@ def main():
         cover_path[key] = p
 
     # timeline → motion-сегменты (двойная экспозиция с движением) → xfade-цепь
-    seq, total = build_timeline(variant, bpm, seed, calm, split)
-    print(f"  variant={variant} bpm={bpm} seed={seed} calm={calm} split={split}")
+    seq, total = build_timeline(variant, bpm, seed, calm, split, scenario)
+    print(f"  variant={variant} bpm={bpm} seed={seed} calm={calm} split={split} scenario={scenario}")
+    print(f"  style={style['name']} — {style.get('note','')}")
     nominal = round(total, 3)
     print(f"  segments={len(seq)} nominal={nominal}s")
     segdir = WORK / "seg"; segdir.mkdir(exist_ok=True)
@@ -459,21 +548,26 @@ def main():
     grt_flip = ",hflip" if tex.random() < 0.5 else ""
     scr_op   = round(tex.uniform(0.5, 0.7), 2)
     grt_op   = round(tex.uniform(0.4, 0.6), 2)
-    nz_str   = 10 + tex.randint(0, 5)
+    nz_str   = tex.randint(style["grain"][0], style["grain"][1])   # сила зерна — из стиля
     nz_seed  = tex.randint(1, 99999)
     scr_ss   = round(tex.uniform(0.0, 4.0), 2)   # старт scratch-петли
     grt_ss   = round(tex.uniform(0.0, 4.0), 2)   # старт grit-петли
+    # грейд+виньетка — из per-track стиля (раньше были зашиты одним луком на все треки)
+    grade = f"eq={style['eq']}"
+    if style.get("balance"):
+        grade += f",colorbalance={style['balance']}"
+    vig = f"vignette={style['vignette']}," if style.get("vignette") else ""
     result = WORK / out_name
     afade_out = max(0.0, duration - 1.5)
     fc = (
-        f"[0:v]fps={FPS},eq=contrast=1.14:saturation=0.9:brightness=-0.02:gamma=0.96,"
+        f"[0:v]fps={FPS},{grade},"
         f"format=gbrp,setpts=PTS-STARTPTS[v];"
         f"[1:v]scale={W}:{H},fps={FPS},format=gray{scr_flip},format=gbrp,setpts=PTS-STARTPTS[scr];"
         f"[2:v]scale={W}:{H},fps={FPS},format=gray{grt_flip},format=gbrp,setpts=PTS-STARTPTS[grt];"
         f"[v][scr]blend=all_mode=screen:all_opacity={scr_op}[b1];"
         f"[b1][grt]blend=all_mode=screen:all_opacity={grt_op}[b2];"
         f"[b2]format=yuv420p,noise=alls={nz_str}:all_seed={nz_seed}:allf=t+u,"
-        f"vignette=angle=PI/4.5,"
+        f"{vig}"
         f"trim=duration={duration},setpts=PTS-STARTPTS{draw_chain}[vout]"
     )
     cmd = [
