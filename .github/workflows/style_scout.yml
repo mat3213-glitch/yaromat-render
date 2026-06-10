@@ -51,7 +51,7 @@ jobs:
           CLOUDFLARE_WORKER:     ${{ secrets.CLOUDFLARE_WORKER }}
           TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
           STYLE_SCOUT_CHAT_ID:   ${{ secrets.SCOUT_CHAT_ID }}   # та же группа @yaromat
-          STYLE_SCOUT_THREAD_ID: "5"                            # тема «фактори»
+          STYLE_SCOUT_THREAD_ID: "634"                          # тема «STYLE SCOUT»
         run: python style_scout.py --per-query "${{ github.event.inputs.per_query || '3' }}" --limit "${{ github.event.inputs.limit || '6' }}"
 
       - name: Commit proposals
