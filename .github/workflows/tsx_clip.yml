@@ -47,5 +47,9 @@ jobs:
 
       - name: Render TSX clip
         env:
-          JOB_ID: ${{ github.event.inputs.job_id }}
+          JOB_ID:             ${{ github.event.inputs.job_id }}
+          CLOUDFLARE_WORKER:  ${{ secrets.CLOUDFLARE_WORKER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID:         ${{ secrets.SCOUT_CHAT_ID }}
+          TG_THREAD_ID:       "634"
         run: python tsx_clip_job.py

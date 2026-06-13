@@ -48,6 +48,32 @@ def yd_put_text(text: str, remote: str):
     t = WORK / "_s.txt"; t.write_text(text); yd_put(t, remote)
 
 
+def send_tg(result: Path, composition: str, fmt: str, duration: float, title: str):
+    """Пинг готового клипа в TG С РАННЕРА (чистый egress → workers.dev доступен,
+    в отличие от локального RU-канала). Лёгкий прокси + sendVideo через воркер.
+    Best-effort: не валит джоб, если TG недоступен (клип уже на ЯД)."""
+    worker = os.environ.get("CLOUDFLARE_WORKER")
+    token  = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat   = os.environ.get("TG_CHAT_ID")
+    thread = os.environ.get("TG_THREAD_ID", "")
+    if not (worker and token and chat):
+        print("  [tg] секреты не заданы — пропуск пинга"); return
+    proxy = WORK / "tg_proxy.mp4"
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(result),
+         "-vf", "scale=-2:1280", "-c:v", "libx264", "-crf", "30", "-preset", "veryfast",
+         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(proxy)],
+        capture_output=True, text=True)
+    send = proxy if proxy.exists() and proxy.stat().st_size > 5000 else result
+    cap = f"TSX · {composition} · {fmt} · {duration:.0f}с · «{title}» — на ревью"
+    cmd = ["curl", "-sf", "-m", "120", "-F", f"chat_id={chat}"]
+    if thread:
+        cmd += ["-F", f"message_thread_id={thread}"]
+    cmd += ["-F", f"caption={cap}", "-F", f"video=@{send}",
+            f"{worker}/bot{token}/sendVideo"]
+    rr = run(cmd, capture_output=True, text=True)
+    print(f"  [tg] sendVideo rc={rr.returncode} ({send.stat().st_size//1024}KB)")
+
+
 def main():
     print(f"TSX clip job: {JOB_ID}")
 
@@ -86,7 +112,7 @@ def main():
     # рендер визуала (без звука)
     visual = WORK / "visual.mp4"
     r = run(["npx", "remotion", "render", "src/index.ts", composition, str(visual),
-             "--props=./props.json"], cwd=str(REMOTION))
+             "--props=./props.json", "--crf=23"], cwd=str(REMOTION))
     if r.returncode != 0 or not visual.exists():
         yd_put_text(f"error: remotion render rc={r.returncode}", f"{JOB_YD}/status.txt")
         sys.exit("remotion render fail")
@@ -115,6 +141,11 @@ def main():
         yd_put_text("error: upload", f"{JOB_YD}/status.txt"); sys.exit("upload fail")
     yd_put_text("done", f"{JOB_YD}/status.txt")
     print(f"✅ done {out_name} ({mb:.1f}MB)")
+
+    try:
+        send_tg(result, composition, fmt, duration, title)
+    except Exception as e:
+        print(f"  [tg] ping err: {e} (клип на ЯД — не критично)")
 
 
 if __name__ == "__main__":
