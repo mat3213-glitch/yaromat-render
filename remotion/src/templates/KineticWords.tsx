@@ -3,6 +3,7 @@ import {
   AbsoluteFill, Img, staticFile, useCurrentFrame, useVideoConfig, interpolate, spring,
 } from 'remotion';
 import {TemplateProps, rng} from '../contract';
+import {TITLE_FONT} from '../fonts';
 
 /**
  * KineticWords — кинетическая типографика.
@@ -69,7 +70,7 @@ export const KineticWords: React.FC<TemplateProps> = ({
           {wordEntries.map(({word, y: wy, opacity: wo, blur: wb, index: idx}) => (
             <div key={idx} style={{
               color: accent,
-              fontFamily: 'Georgia, serif',
+              fontFamily: TITLE_FONT,
               fontSize: words.length > 4 ? width * 0.06 : width * 0.078,
               fontWeight: 700,
               letterSpacing: 2,
@@ -87,7 +88,7 @@ export const KineticWords: React.FC<TemplateProps> = ({
           <div style={{
             color: accent,
             opacity: brandOpacity,
-            fontFamily: 'Georgia, serif',
+            fontFamily: TITLE_FONT,
             fontSize: width * 0.028,
             fontWeight: 400,
             marginTop: height * 0.02,

@@ -3,6 +3,7 @@ import {
   AbsoluteFill, Img, staticFile, useCurrentFrame, useVideoConfig, interpolate, spring,
 } from 'remotion';
 import {TemplateProps, rng} from '../contract';
+import {TITLE_FONT} from '../fonts';
 
 /**
  * KineticCard — РЕФЕРЕНСНЫЙ шаблон (образец контракта для mimo).
@@ -40,13 +41,13 @@ export const KineticCard: React.FC<TemplateProps> = ({
       >
         <div style={{opacity: titleIn, transform: `translateY(${titleY}px)`, textAlign: 'center'}}>
           <div style={{
-            color: accent, fontFamily: 'Georgia, serif', fontSize: width * 0.072,
+            color: accent, fontFamily: TITLE_FONT, fontSize: width * 0.072,
             fontWeight: 600, letterSpacing: 1, textShadow: '0 2px 18px rgba(0,0,0,0.55)',
           }}>
             {trackTitle}
           </div>
           <div style={{
-            color: accent, opacity: 0.7, fontFamily: 'Georgia, serif', fontSize: width * 0.034,
+            color: accent, opacity: 0.7, fontFamily: TITLE_FONT, fontSize: width * 0.034,
             marginTop: height * 0.012, letterSpacing: 3,
           }}>
             {brand}
