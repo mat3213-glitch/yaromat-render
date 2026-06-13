@@ -2,6 +2,7 @@ import React from 'react';
 import {Composition} from 'remotion';
 import {templatePropsSchema, TemplateProps, FPS, PREVIEW_SEC, FORMAT_DIMS} from './contract';
 import {KineticCard} from './templates/KineticCard';
+import {KineticWords} from './templates/KineticWords';
 
 /**
  * Реестр шаблонов. mimo ДОБАВЛЯЕТ сюда РОВНО одну строку на свой новый шаблон
@@ -9,6 +10,7 @@ import {KineticCard} from './templates/KineticCard';
  */
 const TEMPLATES: {id: string; component: React.FC<TemplateProps>}[] = [
   {id: 'KineticCard', component: KineticCard},
+  {id: 'KineticWords', component: KineticWords},
 ];
 
 const DEFAULT_PROPS: TemplateProps = {
@@ -34,7 +36,7 @@ export const RemotionRoot: React.FC = () => {
           durationInFrames={FPS * PREVIEW_SEC}
           width={FORMAT_DIMS.vertical.width}
           height={FORMAT_DIMS.vertical.height}
-          calculateMetadata={({props}) => {
+          calculateMetadata={({props}: {props: TemplateProps}) => {
             const dims = FORMAT_DIMS[props.format as 'square' | 'vertical'] ?? FORMAT_DIMS.vertical;
             return {
               width: dims.width,

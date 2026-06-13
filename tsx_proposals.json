@@ -1,0 +1,13 @@
+{
+  "_doc": "Кандидаты TSX-шаблонов на ревью. Агент/субагент пишет сюда. После OK yaromat по превью — tsx_scout_merge.py вливает выбранных в tsx_templates.json.",
+  "candidates": [
+    {
+      "name": "KineticWords",
+      "note": "кинетическая типографика: слова трека влетают стаггером (spring+blur→sharp+fade), бренд после заголовка, арт — приглушённый дрейф-задник. Автор: субагент mimo по ТЗ.",
+      "composition": "KineticWords",
+      "source": "mimo",
+      "format": ["square", "vertical"],
+      "preview": "pending-sandbox-render"
+    }
+  ]
+}
