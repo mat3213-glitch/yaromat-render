@@ -1,0 +1,49 @@
+name: tsx-overlay
+
+# Накладывает TSX-оверлей (графический хук с альфой) поверх базового клипа.
+# Вход: render_jobs/<JOB_ID>/ (job.json + base_clip.mp4). Выход: out_name.mp4 на ЯД + пинг в TG.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "JOB_ID (папка в render_jobs/ на ЯД)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  overlay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: System deps
+        run: sudo apt-get update -qq && sudo apt-get install -y --fix-missing ffmpeg rclone
+      - name: Configure rclone ydrive
+        env:
+          YDRIVE_CLIENT_ID:     ${{ secrets.YDRIVE_CLIENT_ID }}
+          YDRIVE_CLIENT_SECRET: ${{ secrets.YDRIVE_CLIENT_SECRET }}
+          YDRIVE_TOKEN:         ${{ secrets.YDRIVE_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.config/rclone"
+          printf '[ydrive]\ntype = yandex\nclient_id = %s\nclient_secret = %s\ntoken = %s\n' \
+            "$YDRIVE_CLIENT_ID" "$YDRIVE_CLIENT_SECRET" "$YDRIVE_TOKEN" \
+            > "$HOME/.config/rclone/rclone.conf"
+      - name: Install remotion deps
+        working-directory: remotion
+        run: npm install --no-audit --no-fund
+      - name: Render + composite overlay
+        env:
+          JOB_ID:             ${{ github.event.inputs.job_id }}
+          CLOUDFLARE_WORKER:  ${{ secrets.CLOUDFLARE_WORKER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID:         ${{ secrets.SCOUT_CHAT_ID }}
+          TG_THREAD_ID:       "634"
+        run: python tsx_overlay_job.py

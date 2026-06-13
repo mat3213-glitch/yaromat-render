@@ -1,8 +1,10 @@
 import React from 'react';
 import {Composition} from 'remotion';
 import {templatePropsSchema, TemplateProps, FPS, PREVIEW_SEC, FORMAT_DIMS} from './contract';
+import {overlayPropsSchema, OverlayProps} from './overlay_contract';
 import {KineticCard} from './templates/KineticCard';
 import {KineticWords} from './templates/KineticWords';
+import {FocusBracket} from './overlays/FocusBracket';
 
 /**
  * Реестр шаблонов. mimo ДОБАВЛЯЕТ сюда РОВНО одну строку на свой новый шаблон
@@ -20,6 +22,22 @@ const DEFAULT_PROPS: TemplateProps = {
   palette: ['#0b0d10', '#1a2230', '#cfd6dd'],
   seed: 42,
   format: 'vertical',
+};
+
+/**
+ * ОВЕРЛЕИ — графические хуки с альфой (à la CapCut). Рендерятся прозрачными
+ * (ProRes 4444), композитятся поверх клипа. mimo добавляет сюда новые так же —
+ * одна строка (import + объект). Это ОСНОВНОЕ применение TSX (не полнокадровый текст).
+ */
+const OVERLAYS: {id: string; component: React.FC<OverlayProps>}[] = [
+  {id: 'FocusBracket', component: FocusBracket},
+];
+
+const OVERLAY_DEFAULTS: OverlayProps = {
+  seed: 42,
+  format: 'vertical',
+  durationSec: 2,
+  palette: ['#e8e2d6', '#cfd6dd', '#1a2230'],
 };
 
 export const RemotionRoot: React.FC = () => {
@@ -42,6 +60,29 @@ export const RemotionRoot: React.FC = () => {
               ? Math.round(props.durationSec * FPS)
               : FPS * PREVIEW_SEC;
             return {width: dims.width, height: dims.height, fps: FPS, durationInFrames};
+          }}
+        />
+      ))}
+
+      {OVERLAYS.map(({id, component}) => (
+        <Composition
+          key={id}
+          id={id}
+          component={component as React.FC<Record<string, unknown>>}
+          schema={overlayPropsSchema}
+          defaultProps={OVERLAY_DEFAULTS}
+          fps={FPS}
+          durationInFrames={FPS * 2}
+          width={FORMAT_DIMS.vertical.width}
+          height={FORMAT_DIMS.vertical.height}
+          calculateMetadata={({props}: {props: OverlayProps}) => {
+            const dims = FORMAT_DIMS[props.format as 'square' | 'vertical'] ?? FORMAT_DIMS.vertical;
+            return {
+              width: dims.width,
+              height: dims.height,
+              fps: FPS,
+              durationInFrames: Math.round((props.durationSec || 2) * FPS),
+            };
           }}
         />
       ))}

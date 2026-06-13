@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+tsx_overlay_job.py — GH Actions runner: накладывает TSX-ОВЕРЛЕЙ (графический хук
+с альфой) поверх базового клипа в нужный момент. Это ОСНОВНОЕ применение TSX
+(à la CapCut: акценты/переходы/динамика), не полнокадровый текст.
+
+Флоу: рендер overlay-композиции прозрачной (ProRes 4444) → ffmpeg overlay на base в [at..at+dur].
+
+С ЯД (render_jobs/<JOB_ID>/): job.json, <base_clip>.mp4
+Из репо: remotion/ (оверлеи)
+
+job.json:
+  {"overlay":"FocusBracket", "format":"vertical|square", "out_name":"...mp4",
+   "base_clip":"base.mp4", "at":3.0, "overlay_dur":2.0, "seed":7,
+   "palette":["#..",...] (опц), "accent_text":"..." (опц)}
+
+Env: JOB_ID + (опц.) CLOUDFLARE_WORKER/TELEGRAM_BOT_TOKEN/TG_CHAT_ID/TG_THREAD_ID
+"""
+import json, os, subprocess, sys
+from pathlib import Path
+
+JOB_ID = os.environ.get("JOB_ID", "")
+if not JOB_ID:
+    sys.exit("JOB_ID not set")
+
+REMOTE   = "ydrive"
+JOB_YD   = f"Content factory/render_jobs/{JOB_ID}"
+WORK     = Path("/tmp/tsx_overlay"); WORK.mkdir(parents=True, exist_ok=True)
+REPO     = Path(__file__).resolve().parent
+REMOTION = REPO / "remotion"
+
+
+def run(cmd, **kw):
+    print("  $", " ".join(str(c) for c in cmd[:8]), "...", flush=True)
+    return subprocess.run(cmd, **kw)
+
+def yd_get(remote, local: Path) -> bool:
+    local.parent.mkdir(parents=True, exist_ok=True)
+    return run(["rclone", "copyto", f"{REMOTE}:{remote}", str(local)],
+               capture_output=True, text=True).returncode == 0
+
+def yd_put(local: Path, remote) -> bool:
+    return run(["rclone", "copyto", str(local), f"{REMOTE}:{remote}"],
+               capture_output=True, text=True).returncode == 0
+
+def yd_put_text(text, remote):
+    t = WORK / "_s.txt"; t.write_text(text); yd_put(t, remote)
+
+
+def send_tg(result: Path, label: str):
+    """Пинг превью в TG С РАННЕРА (чистый egress). Best-effort."""
+    worker = os.environ.get("CLOUDFLARE_WORKER"); token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat   = os.environ.get("TG_CHAT_ID"); thread = os.environ.get("TG_THREAD_ID", "")
+    if not (worker and token and chat):
+        print("  [tg] секреты не заданы — пропуск"); return
+    proxy = WORK / "tg_proxy.mp4"
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(result),
+         "-vf", "scale=-2:1280", "-c:v", "libx264", "-crf", "30", "-preset", "veryfast",
+         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(proxy)],
+        capture_output=True, text=True)
+    send = proxy if proxy.exists() and proxy.stat().st_size > 5000 else result
+    cmd = ["curl", "-sf", "-m", "120", "-F", f"chat_id={chat}"]
+    if thread:
+        cmd += ["-F", f"message_thread_id={thread}"]
+    cmd += ["-F", f"caption={label}", "-F", f"video=@{send}",
+            f"{worker}/bot{token}/sendVideo"]
+    rr = run(cmd, capture_output=True, text=True)
+    print(f"  [tg] sendVideo rc={rr.returncode} ({send.stat().st_size//1024}KB)")
+
+
+def main():
+    print(f"TSX overlay job: {JOB_ID}")
+    jf = WORK / "job.json"
+    if not yd_get(f"{JOB_YD}/job.json", jf):
+        sys.exit("no job.json")
+    job = json.loads(jf.read_text())
+
+    overlay    = job["overlay"]
+    fmt        = job.get("format", "vertical")
+    out_name   = job["out_name"]
+    base_clip  = job.get("base_clip", "base.mp4")
+    at         = float(job.get("at", 3.0))
+    ov_dur     = float(job.get("overlay_dur", 2.0))
+    seed       = int(job.get("seed", 42))
+    print(f"  overlay={overlay} fmt={fmt} base={base_clip} at={at}s dur={ov_dur}s seed={seed}")
+
+    base = WORK / "base.mp4"
+    if not yd_get(f"{JOB_YD}/{base_clip}", base):
+        sys.exit(f"no base {base_clip}")
+
+    # props оверлея
+    props = {"seed": seed, "format": fmt, "durationSec": ov_dur}
+    if job.get("palette"):     props["palette"] = job["palette"]
+    if job.get("accent_text"): props["accentText"] = job["accent_text"]
+    (REMOTION / "props.json").write_text(json.dumps(props, ensure_ascii=False))
+
+    # рендер оверлея ПРОЗРАЧНЫМ (ProRes 4444 несёт альфу)
+    ov = WORK / "overlay.mov"
+    r = run(["npx", "remotion", "render", "src/index.ts", overlay, str(ov),
+             "--props=./props.json", "--codec=prores", "--prores-profile=4444"],
+            cwd=str(REMOTION))
+    if r.returncode != 0 or not ov.exists():
+        yd_put_text(f"error: overlay render rc={r.returncode}", f"{JOB_YD}/status.txt")
+        sys.exit("overlay render fail")
+    print(f"  overlay.mov {ov.stat().st_size//1024}KB")
+
+    # композит: сдвинуть оверлей на [at], показать [at..at+dur], сохранить аудио базы
+    end = round(at + ov_dur, 3)
+    fc = (f"[1:v]setpts=PTS-STARTPTS+{at}/TB[ov];"
+          f"[0:v][ov]overlay=0:0:enable='between(t,{at},{end})':eof_action=pass,format=yuv420p[v]")
+    result = WORK / out_name
+    r = run(["ffmpeg", "-y", "-loglevel", "error",
+             "-i", str(base), "-i", str(ov),
+             "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0?",
+             "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+             "-c:a", "copy", "-movflags", "+faststart", str(result)],
+            capture_output=True, text=True)
+    if r.returncode != 0 or not result.exists() or result.stat().st_size < 5000:
+        print((r.stderr or "")[-800:])
+        yd_put_text(f"error: composite rc={r.returncode}", f"{JOB_YD}/status.txt")
+        sys.exit("composite fail")
+
+    mb = result.stat().st_size / 1024 / 1024
+    print(f"  {out_name} {mb:.1f}MB")
+    if not yd_put(result, f"{JOB_YD}/{out_name}"):
+        yd_put_text("error: upload", f"{JOB_YD}/status.txt"); sys.exit("upload fail")
+    yd_put_text("done", f"{JOB_YD}/status.txt")
+    print(f"✅ done {out_name} ({mb:.1f}MB)")
+
+    try:
+        send_tg(result, f"TSX overlay · {overlay} · {fmt} · @{at}s — акцент-хук на ревью")
+    except Exception as e:
+        print(f"  [tg] ping err: {e} (клип на ЯД — не критично)")
+
+
+if __name__ == "__main__":
+    main()
