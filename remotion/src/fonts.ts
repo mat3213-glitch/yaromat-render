@@ -1,28 +1,15 @@
-import {staticFile, delayRender, continueRender} from 'remotion';
+import {loadFont as loadLora} from '@remotion/google-fonts/Lora';
+import {loadFont as loadCaveat} from '@remotion/google-fonts/Caveat';
 
 /**
- * Брендовые шрифты — БАНДЛ в remotion/public/fonts/ (в репо, не на ЯД).
- * Раннер получает их вместе с checkout → рендер детерминирован на любой машине
- * (не зависит от того, какой шрифт случайно стоит на раннере).
+ * Брендовые шрифты через @remotion/google-fonts — официальный загрузчик Remotion:
+ * корректно держит загрузку через весь рендер (включая многотабовую concurrency),
+ * версия пиннута пакетом → детерминированно. Не ЯД — npm-зависимость (на GH).
  *
- * Загрузка через FontFace + delayRender (ядро remotion, без доп. зависимостей):
- * рендер ждёт, пока шрифт реально загрузится, потом снимает кадры.
+ * Кастомные (НЕ гугл) шрифты — класть .ttf в public/fonts/ и грузить через @remotion/fonts.
  */
-function load(family: string, file: string) {
-  const handle = delayRender(`font:${family}`);
-  const face = new FontFace(family, `url(${staticFile('fonts/' + file)}) format('truetype')`);
-  face
-    .load()
-    .then((loaded) => {
-      document.fonts.add(loaded);
-      continueRender(handle);
-    })
-    .catch(() => continueRender(handle)); // не вешать рендер, если шрифт не подгрузился
-}
+const {fontFamily: LORA} = loadLora();     // чистый serif для титров/названий
+const {fontFamily: CAVEAT} = loadCaveat(); // рукописный бренд-акцент
 
-load('Lora', 'Lora.ttf');
-load('Caveat', 'Caveat.ttf');
-
-// TITLE_FONT — чистый serif для титров/названий. HAND_FONT — рукописный бренд-акцент.
-export const TITLE_FONT = "'Lora', Georgia, serif";
-export const HAND_FONT = "'Caveat', cursive";
+export const TITLE_FONT = `${LORA}, Georgia, serif`;
+export const HAND_FONT = `${CAVEAT}, cursive`;
