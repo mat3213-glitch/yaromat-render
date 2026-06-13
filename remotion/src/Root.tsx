@@ -5,6 +5,9 @@ import {overlayPropsSchema, OverlayProps} from './overlay_contract';
 import {KineticCard} from './templates/KineticCard';
 import {KineticWords} from './templates/KineticWords';
 import {FocusBracket} from './overlays/FocusBracket';
+import {ShapeWipe} from './overlays/ShapeWipe';
+import {AccentBurst} from './overlays/AccentBurst';
+import {BeatPulse} from './overlays/BeatPulse';
 
 /**
  * Реестр шаблонов. mimo ДОБАВЛЯЕТ сюда РОВНО одну строку на свой новый шаблон
@@ -31,6 +34,9 @@ const DEFAULT_PROPS: TemplateProps = {
  */
 const OVERLAYS: {id: string; component: React.FC<OverlayProps>}[] = [
   {id: 'FocusBracket', component: FocusBracket},
+  {id: 'ShapeWipe', component: ShapeWipe},
+  {id: 'AccentBurst', component: AccentBurst},
+  {id: 'BeatPulse', component: BeatPulse},
 ];
 
 const OVERLAY_DEFAULTS: OverlayProps = {
