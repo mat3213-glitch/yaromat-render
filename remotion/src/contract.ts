@@ -23,6 +23,8 @@ export const templatePropsSchema = z.object({
   seed: z.number().default(42),
   // формат кадра
   format: z.enum(['square', 'vertical']).default('vertical'),
+  // длина клипа в секундах (боевой джоб задаёт длину трека-тизера; пусто = превью PREVIEW_SEC)
+  durationSec: z.number().optional(),
 });
 
 export type TemplateProps = z.infer<typeof templatePropsSchema>;

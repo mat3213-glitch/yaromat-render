@@ -1,0 +1,51 @@
+name: tsx-clip
+
+# Боевой клип через TSX/Remotion-движок (TSX как медиум пула).
+# Вход: render_jobs/<JOB_ID>/ на ЯД (job.json + track.mp3 + арт). Выход: out_name.mp4 на ЯД.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "JOB_ID (папка в Content factory/render_jobs/ на ЯД)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: System deps
+        run: sudo apt-get update -qq && sudo apt-get install -y --fix-missing ffmpeg rclone
+
+      - name: Configure rclone ydrive
+        env:
+          YDRIVE_CLIENT_ID:     ${{ secrets.YDRIVE_CLIENT_ID }}
+          YDRIVE_CLIENT_SECRET: ${{ secrets.YDRIVE_CLIENT_SECRET }}
+          YDRIVE_TOKEN:         ${{ secrets.YDRIVE_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.config/rclone"
+          printf '[ydrive]\ntype = yandex\nclient_id = %s\nclient_secret = %s\ntoken = %s\n' \
+            "$YDRIVE_CLIENT_ID" "$YDRIVE_CLIENT_SECRET" "$YDRIVE_TOKEN" \
+            > "$HOME/.config/rclone/rclone.conf"
+
+      - name: Install remotion deps
+        working-directory: remotion
+        run: npm install --no-audit --no-fund
+
+      - name: Render TSX clip
+        env:
+          JOB_ID: ${{ github.event.inputs.job_id }}
+        run: python tsx_clip_job.py

@@ -38,12 +38,10 @@ export const RemotionRoot: React.FC = () => {
           height={FORMAT_DIMS.vertical.height}
           calculateMetadata={({props}: {props: TemplateProps}) => {
             const dims = FORMAT_DIMS[props.format as 'square' | 'vertical'] ?? FORMAT_DIMS.vertical;
-            return {
-              width: dims.width,
-              height: dims.height,
-              fps: FPS,
-              durationInFrames: FPS * PREVIEW_SEC,
-            };
+            const durationInFrames = props.durationSec
+              ? Math.round(props.durationSec * FPS)
+              : FPS * PREVIEW_SEC;
+            return {width: dims.width, height: dims.height, fps: FPS, durationInFrames};
           }}
         />
       ))}
