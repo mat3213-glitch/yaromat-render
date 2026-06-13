@@ -1,0 +1,88 @@
+name: tsx-sandbox
+
+# Песочница TSX/Remotion: рендерит композицию на тест-арте и шлёт превью в TG на ревью.
+# НИЧЕГО не вливает в боевой пул — это гейт-этап (как style_scout). Merge — вручную (tsx_scout_merge.py).
+
+on:
+  workflow_dispatch:
+    inputs:
+      composition:
+        description: "Composition id (из remotion/src/Root.tsx TEMPLATES)"
+        default: "KineticCard"
+      format:
+        description: "square | vertical"
+        default: "vertical"
+      title:
+        description: "название трека для типографики"
+        default: "sky is in my hands"
+      art_remote:
+        description: "ЯД-путь вайб-арта (опц.; пусто = тест-кадр репо)"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install rclone
+        run: sudo apt-get update -qq && sudo apt-get install -y --fix-missing rclone
+
+      - name: Configure rclone ydrive
+        env:
+          YDRIVE_CLIENT_ID:     ${{ secrets.YDRIVE_CLIENT_ID }}
+          YDRIVE_CLIENT_SECRET: ${{ secrets.YDRIVE_CLIENT_SECRET }}
+          YDRIVE_TOKEN:         ${{ secrets.YDRIVE_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.config/rclone"
+          printf '[ydrive]\ntype = yandex\nclient_id = %s\nclient_secret = %s\ntoken = %s\n' \
+            "$YDRIVE_CLIENT_ID" "$YDRIVE_CLIENT_SECRET" "$YDRIVE_TOKEN" \
+            > "$HOME/.config/rclone/rclone.conf"
+
+      - name: Install remotion deps
+        working-directory: remotion
+        run: npm install --no-audit --no-fund
+
+      - name: Prepare test art (public/testart.jpg)
+        run: |
+          mkdir -p remotion/public
+          if [ -n "${{ github.event.inputs.art_remote }}" ]; then
+            rclone copyto "ydrive:${{ github.event.inputs.art_remote }}" remotion/public/testart.jpg
+          else
+            cp style_scout_testframe.jpg remotion/public/testart.jpg
+          fi
+
+      - name: Render composition
+        working-directory: remotion
+        run: |
+          cat > props.json <<EOF
+          {"artUrl":"testart.jpg","trackTitle":"${{ github.event.inputs.title }}","format":"${{ github.event.inputs.format }}","brand":"yaromat","seed":42}
+          EOF
+          npx remotion render src/index.ts "${{ github.event.inputs.composition }}" ../preview.mp4 --props=./props.json --log=verbose
+
+      - name: Upload preview to YaDisk
+        run: |
+          STAMP=$(date +%Y%m%d_%H%M%S)
+          rclone copyto preview.mp4 "ydrive:Content factory/tsx_sandbox/${{ github.event.inputs.composition }}_${STAMP}.mp4"
+
+      - name: Ping preview to Telegram
+        env:
+          CLOUDFLARE_WORKER:  ${{ secrets.CLOUDFLARE_WORKER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID:            ${{ secrets.SCOUT_CHAT_ID }}
+          THREAD_ID:          "634"
+        run: |
+          curl -sf -F chat_id="${CHAT_ID}" \
+               -F message_thread_id="${THREAD_ID}" \
+               -F caption="TSX sandbox · ${{ github.event.inputs.composition }} · ${{ github.event.inputs.format }} · «${{ github.event.inputs.title }}» — на ревью" \
+               -F video=@preview.mp4 \
+               "${CLOUDFLARE_WORKER}/bot${TELEGRAM_BOT_TOKEN}/sendVideo" || echo "TG ping failed (превью всё равно на ЯД)"

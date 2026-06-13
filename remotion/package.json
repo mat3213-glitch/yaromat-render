@@ -1,0 +1,22 @@
+{
+  "name": "yaromat-tsx-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TSX/Remotion motion-graphics engine — техника движения для пула разнообразия. Рендер только на GH Actions.",
+  "scripts": {
+    "render": "remotion render src/index.ts",
+    "studio": "remotion studio src/index.ts",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.190",
+    "remotion": "4.0.190",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.3",
+    "typescript": "5.5.4"
+  }
+}

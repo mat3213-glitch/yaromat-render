@@ -1,0 +1,13 @@
+{
+  "_doc": "Реестр одобренных TSX/Remotion-шаблонов (техника движения для пула). Пополняется ТОЛЬКО через tsx_scout_merge.py после OK yaromat по превью. Каждый шаблон = composition id в remotion/ + метаданные. movement_pool_producer/director выбирает шаблон на трек по seed. БЕЗ неона, бренд строчными.",
+  "_version": 1,
+  "templates": [
+    {
+      "name": "KineticCard",
+      "note": "референс: вайб-арт Ken-Burns + пружинная кинетическая типографика (трек+бренд), виньетка",
+      "composition": "KineticCard",
+      "source": "builtin",
+      "format": ["square", "vertical"]
+    }
+  ]
+}
