@@ -48,6 +48,22 @@ def yd_put_text(text: str, remote: str):
     t = WORK / "_s.txt"; t.write_text(text); yd_put(t, remote)
 
 
+def read_approval(name: str, kind: str = "templates"):
+    """Читает <Name>.md рядом с компонентом → (approved: bool|None, text).
+    approved=None означает «README нет». Ранер ОБЯЗАН вызвать перед использованием шаблона."""
+    md = REMOTION / "src" / kind / f"{name}.md"
+    if not md.exists():
+        return None, ""
+    text = md.read_text(encoding="utf-8")
+    approved = False
+    for line in text.splitlines():
+        s = line.strip().lower()
+        if s.startswith("approved:"):
+            approved = s.split(":", 1)[1].strip() in ("yes", "true", "да")
+            break
+    return approved, text
+
+
 def send_tg(result: Path, composition: str, fmt: str, duration: float, title: str):
     """Пинг готового клипа в TG С РАННЕРА (чистый egress → workers.dev доступен,
     в отличие от локального RU-канала). Лёгкий прокси + sendVideo через воркер.
@@ -91,6 +107,18 @@ def main():
     seed        = int(job.get("seed", 42))
     art_name    = job.get("art_name", "art.png")
     print(f"  comp={composition} fmt={fmt} dur={duration}s seed={seed} art={art_name}")
+
+    # --- гейт апрува: ранер читает README шаблона ПЕРЕД использованием ---
+    approved, _ = read_approval(composition, "templates")
+    allow = bool(job.get("allow_unapproved", False))
+    if approved is None:
+        yd_put_text(f"refused: no README for {composition}", f"{JOB_YD}/status.txt")
+        sys.exit(f"REFUSE: у шаблона {composition} нет README — добавь remotion/src/templates/{composition}.md с полем approved:")
+    print(f"  approval: {'YES' if approved else 'NO'} (allow_unapproved={allow})")
+    if not approved and not allow:
+        yd_put_text(f"refused: {composition} not prod-approved", f"{JOB_YD}/status.txt")
+        sys.exit(f"REFUSE: {composition} помечен approved: no — прод-использование запрещено. "
+                 f"Для ревью-рендера поставь \"allow_unapproved\": true в job.json")
 
     # вход с ЯД: трек + вайб-арт (арт кладём в remotion/public/ для staticFile)
     track = WORK / "track.mp3"

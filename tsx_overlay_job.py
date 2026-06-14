@@ -47,6 +47,22 @@ def yd_put_text(text, remote):
     t = WORK / "_s.txt"; t.write_text(text); yd_put(t, remote)
 
 
+def read_approval(name: str, kind: str = "overlays"):
+    """Читает <Name>.md рядом с компонентом → (approved: bool|None, text).
+    approved=None означает «README нет». Ранер ОБЯЗАН вызвать перед использованием хука."""
+    md = REMOTION / "src" / kind / f"{name}.md"
+    if not md.exists():
+        return None, ""
+    text = md.read_text(encoding="utf-8")
+    approved = False
+    for line in text.splitlines():
+        s = line.strip().lower()
+        if s.startswith("approved:"):
+            approved = s.split(":", 1)[1].strip() in ("yes", "true", "да")
+            break
+    return approved, text
+
+
 def send_tg(result: Path, label: str):
     """Пинг превью в TG С РАННЕРА (чистый egress). Best-effort."""
     worker = os.environ.get("CLOUDFLARE_WORKER"); token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -83,6 +99,19 @@ def main():
     ov_dur     = float(job.get("overlay_dur", 2.0))
     seed       = int(job.get("seed", 42))
     print(f"  overlay={overlay} fmt={fmt} base={base_clip} at={at}s dur={ov_dur}s seed={seed}")
+
+    # --- гейт апрува: ранер читает README хука ПЕРЕД использованием ---
+    approved, _ = read_approval(overlay, "overlays")
+    allow = bool(job.get("allow_unapproved", False))
+    if approved is None:
+        yd_put_text(f"refused: no README for {overlay}", f"{JOB_YD}/status.txt")
+        sys.exit(f"REFUSE: у хука {overlay} нет README — добавь remotion/src/overlays/{overlay}.md с полем approved:")
+    print(f"  approval: {'YES' if approved else 'NO'} (allow_unapproved={allow})")
+    if not approved and not allow:
+        yd_put_text(f"refused: {overlay} not prod-approved", f"{JOB_YD}/status.txt")
+        sys.exit(f"REFUSE: {overlay} помечен approved: no — прод-использование запрещено. "
+                 f"Для ревью-рендера поставь \"allow_unapproved\": true в job.json")
+    approval_tag = "" if approved else " ⚠ НЕ ПРОД-АПРУВ"
 
     base = WORK / "base.mp4"
     if not yd_get(f"{JOB_YD}/{base_clip}", base):
@@ -128,7 +157,7 @@ def main():
     print(f"✅ done {out_name} ({mb:.1f}MB)")
 
     try:
-        send_tg(result, f"TSX overlay · {overlay} · {fmt} · @{at}s — акцент-хук на ревью")
+        send_tg(result, f"TSX overlay · {overlay} · {fmt} · @{at}s — акцент-хук на ревью{approval_tag}")
     except Exception as e:
         print(f"  [tg] ping err: {e} (клип на ЯД — не критично)")
 
