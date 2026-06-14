@@ -1,0 +1,35 @@
+{
+  "verdicts": [
+    {
+      "name": "scout_warm_night_muted",
+      "keep": true,
+      "score": 8,
+      "reason": "Тёплый мятый тон, кинематографичность, ощущение дорогой плёнки"
+    },
+    {
+      "name": "scout_cool_mid_muted",
+      "keep": true,
+      "score": 7,
+      "reason": "Холодный баланс, чистый, строгий, вписывается в вайб"
+    },
+    {
+      "name": "scout_green_night_soft",
+      "keep": false,
+      "score": 4,
+      "reason": "Зелёный каст выглядит как дешёвый фильтр, портит глубину"
+    },
+    {
+      "name": "scout_neutral_night_soft",
+      "keep": true,
+      "score": 7,
+      "reason": "Беспечный, нейтральный, цельный, безопасный вариант для ротации"
+    }
+  ],
+  "recommend_merge": [
+    "scout_warm_night_muted",
+    "scout_cool_mid_muted",
+    "scout_neutral_night_soft"
+  ],
+  "_generated": "2026-06-14",
+  "_judge": "mimo-auto"
+}
