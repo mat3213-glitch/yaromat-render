@@ -32,6 +32,14 @@ QUERIES = [
     "blue hour cinematic still", "sepia toned portrait film",
 ]
 
+# Тренд-запросы из анализа сигналов (S3.2): подмешиваются, если одобрены через /trend_apply.
+_EXTRA_Q = HERE / "extra_queries.json"
+if _EXTRA_Q.exists():
+    try:
+        QUERIES = QUERIES + [q for q in json.loads(_EXTRA_Q.read_text(encoding="utf-8")) if q]
+    except Exception:
+        pass
+
 
 # ── Openverse (минимальный клиент, креды из env или анонимно) ──────────────────
 

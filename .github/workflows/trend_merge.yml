@@ -1,0 +1,61 @@
+name: trend merge
+
+# S3.2: применяет одобренные тренд-параметры (грейды→styles.json, запросы→extra_queries.json).
+# Дёргает облачный бот по /trend_apply. Параметры приходят inputs-ами (JSON-строки).
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidates_json:
+        description: "JSON-массив грейдов [{name,eq,balance,note}]"
+        required: false
+        default: "[]"
+      queries_json:
+        description: "JSON-массив строк-запросов"
+        required: false
+        default: "[]"
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply trend params
+        id: apply
+        env:
+          CANDIDATES_JSON: ${{ github.event.inputs.candidates_json }}
+          QUERIES_JSON:    ${{ github.event.inputs.queries_json }}
+        run: python3 trend_merge.py | tee /tmp/out.txt
+
+      - name: Commit
+        id: commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add styles.json extra_queries.json
+          if git diff --cached --quiet; then
+            echo "changed=0" >> "$GITHUB_OUTPUT"; echo "нечего применять"
+          else
+            git commit -m "trend: apply approved grades/queries [skip ci]"; git push
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify 634
+        if: always()
+        env:
+          WORKER:   ${{ secrets.CLOUDFLARE_WORKER }}
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT:     ${{ secrets.SCOUT_CHAT_ID }}
+        run: |
+          SUM=$(tail -1 /tmp/out.txt 2>/dev/null || echo "—")
+          [ "${{ steps.commit.outputs.changed }}" = "1" ] && MSG="✅ Тренд-параметры применены: $SUM" || MSG="ℹ️ Тренд-мердж: изменений нет ($SUM)"
+          curl -sf -m 30 -H "Content-Type: application/json" \
+            -d "{\"chat_id\":\"$CHAT\",\"message_thread_id\":634,\"text\":\"$MSG\"}" \
+            "$WORKER/bot$TG_TOKEN/sendMessage" >/dev/null || echo "tg fail"
